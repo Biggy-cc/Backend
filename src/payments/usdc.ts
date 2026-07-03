@@ -49,8 +49,8 @@ export async function createPaymentLink(
 
   const amount =
     plan === "monthly"
-      ? Number(process.env.MONTHLY_USDC ?? "5")
-      : Number(process.env.YEARLY_USDC ?? "54");
+      ? Number(process.env.MONTHLY_USDC ?? "9")
+      : Number(process.env.YEARLY_USDC ?? "79");
 
   // Solana Pay requires a real pubkey as reference — text IDs break wallet deep links.
   const referenceKey = Keypair.generate().publicKey.toBase58();

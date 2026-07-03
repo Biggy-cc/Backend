@@ -64,15 +64,15 @@ export function summarizePickChanges(
   const added = [...nextMatches].filter((m) => !prevMatches.has(m));
 
   if (dropped.length > 0 && added.length > 0) {
-    return `Matches updated — rolled off ${dropped.slice(0, 2).join(", ")}${dropped.length > 2 ? "…" : ""} and onto ${added.slice(0, 2).join(", ")}${added.length > 2 ? "…" : ""}.`;
+    return `Matches updated. Rolled off ${dropped.slice(0, 2).join(", ")}${dropped.length > 2 ? "…" : ""} and onto ${added.slice(0, 2).join(", ")}${added.length > 2 ? "…" : ""}.`;
   }
   if (added.length > 0) {
     return `Picks now include ${added.slice(0, 3).join(", ")}${added.length > 3 ? "…" : ""}.`;
   }
   if (dropped.length > 0) {
-    return `Earlier kickoffs removed — card focuses on ${[...nextMatches].slice(0, 3).join(", ")}.`;
+    return `Earlier kickoffs removed. Card focuses on ${[...nextMatches].slice(0, 3).join(", ")}.`;
   }
-  return "Lines or team news shifted — picks updated to match.";
+  return "Today's football picks are refreshed.";
 }
 
 export async function explainPickChanges(

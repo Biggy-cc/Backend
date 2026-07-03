@@ -447,7 +447,7 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
     legs: hitLegs,
     combinedOdds: productOdds(hitLegs),
     breakdown:
-      "Earlier games kicked off — refreshed with the next upcoming fixtures. Low-risk overs on two separate matches using current pre-match lines.",
+      "Earlier games kicked off. Refreshed with the next upcoming fixtures. Low-risk overs on two separate matches.",
   };
   const aim = {
     legs: aimLegs,
@@ -464,7 +464,7 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   return {
     dailyThesis: [primary, secondary].map((b) => ({
       match: fixtureLabel(b.fixture),
-      summary: `Next bettable match — ${fixtureLabel(b.fixture)}`,
+      summary: `Next bettable match. ${fixtureLabel(b.fixture)}`,
       winnerLean:
         b.fixture.FixtureId === primary.fixture.FixtureId
           ? pWin.Selection.replace(/\s+to\s+win$/i, "").trim()

@@ -19,7 +19,7 @@ export function startPaymentPoller() {
       await checkPendingPayments(async (telegramId) => {
         await bot.api.sendMessage(
           telegramId,
-          "✅ Payment verified! Welcome to Biggy Premium."
+          "✅ Payment verified. Welcome to Biggy Premium. Unlimited daily football picks.",
         );
 
         const hit = await getCachedPick(todayPickDate(), "hit");

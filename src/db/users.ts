@@ -67,16 +67,16 @@ export function formatAccessStatus(user: UserRow): string {
       day: "numeric",
       year: "numeric",
     });
-    const plan = user.early_bird ? "Early-Bird ($5/mo locked)" : "Premium";
+    const plan = user.early_bird ? "Premium (legacy rate)" : "Premium";
     return `✅ ${plan} active until ${until}`;
   }
 
   const remaining = trialPicksRemaining(user);
   if (remaining > 0) {
-    return `🆓 Free trial — ${remaining} pick${remaining === 1 ? "" : "s"} left`;
+    return `🆓 Free trial. ${remaining} pick${remaining === 1 ? "" : "s"} left`;
   }
 
-  return "⚠️ Free trial used — subscribe to keep daily picks";
+  return "⚠️ Free trial used. Subscribe for unlimited daily football picks.";
 }
 
 export async function listActiveUserIds(): Promise<number[]> {

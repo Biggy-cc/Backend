@@ -12,11 +12,11 @@ type MatchBundle = EnrichedMatch & { odds: TxlineOddsEntry[] };
 
 const PLACEHOLDER_MARKERS = [
   "stacking winner and goal markets from live odds",
-  "built from live lines —",
+  "built from live lines.",
   "Pre-match lines on upcoming kickoff",
   "Same-game value on the next kickoff",
   "Low-risk overs on two separate matches using current pre-match lines",
-  "Next bettable match —",
+  "Next bettable match.",
   "Higher combined price from stacking correlated winner and goals markets",
   "Locked legs:",
   "Lines and team news support these markets before kickoff.",
@@ -252,7 +252,7 @@ export async function enrichBundleWithGeminiAnalysis(
     combinedOdds: bundle.picks[tier].combinedOdds,
   }));
 
-  const prompt = `You are Biggy, a data-driven football parlay analyst.
+  const prompt = `You are Biggy. Football picks, not generic sports tips. Football-only, not generic sports betting.
 
 The parlay legs below are LOCKED — do not change matches, selections, or odds values.
 

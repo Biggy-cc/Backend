@@ -2,7 +2,7 @@
   "name": "biggy",
   "version": "0.1.0",
   "private": true,
-  "description": "Biggy — Telegram bot for data-driven World Cup parlays",
+  "description": "Biggy — Telegram bot for data-driven football accumulators",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

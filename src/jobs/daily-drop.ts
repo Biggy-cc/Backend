@@ -26,8 +26,8 @@ export async function runRefreshPicks(bot: Bot) {
 
     const userIds = await listActiveUserIds();
     const notice = kickoffStale
-      ? `⏱️ <b>Matches kicked off — fresh card (v${result.version})</b>\n\n${result.changeNote ?? "Picks updated with the next upcoming games."}\n\nTap a tier for the latest slip:`
-      : `📋 <b>Biggy update (v${result.version})</b>\n\n${result.changeNote ?? "Lines or news shifted — today's picks are refreshed."}\n\nTap a tier for the latest slip:`;
+      ? `⏱️ <b>Fixtures kicked off. Fresh football card (v${result.version})</b>\n\n${result.changeNote ?? "Picks updated with the next upcoming matches."}\n\nTap a tier for the latest slip:`
+      : `📋 <b>Biggy football update (v${result.version})</b>\n\n${result.changeNote ?? "Today's football picks are refreshed."}\n\nTap a tier for the latest slip:`;
 
     console.log(`[refresh] Broadcasting v${result.version} to ${userIds.length} users`);
 

@@ -1,6 +1,6 @@
 # Biggy
 
-Telegram bot that delivers data-driven World Cup parlay combinations using TxLINE odds, Google News context, and Gemini.
+Telegram bot that delivers data-driven football accumulators — World Cup fixtures, live lines, match news, and AI analysis.
 
 ## Prerequisites (you provide)
 
@@ -52,4 +52,4 @@ npm run picks:generate
 - **Data:** TxLINE World Cup free tier (SL 12 real-time)
 - **Context:** Google News RSS → Gemini
 - **Trial:** 7 days from `/start`
-- **Pricing:** 5 USDC/month · 54 USDC/year (early bird)
+- **Pricing:** 9 USDC/month · 79 USDC/year

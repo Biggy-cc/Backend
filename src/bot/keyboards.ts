@@ -1,17 +1,20 @@
 import { InlineKeyboard } from "grammy";
+import { PRICING, yearlySavingsPercent } from "../config/pricing.js";
 import type { PickTier } from "../picks/types.js";
+import { formatTierLabel } from "../picks/types.js";
 
 export function dailyMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🎯 Show Hit", "tier:hit")
-    .text("🏹 Show Aim", "tier:aim")
-    .text("🔥 Show Go Big", "tier:go_big");
+    .text(formatTierLabel("hit"), "tier:hit")
+    .text(formatTierLabel("aim"), "tier:aim")
+    .row()
+    .text(formatTierLabel("go_big"), "tier:go_big");
 }
 
 export function paywallKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("📅 $5 Monthly Plan", "pay:monthly")
-    .text("🏆 $54 Yearly Pass", "pay:yearly");
+    .text(`📅 $${PRICING.monthlyUsdc} Monthly`, "pay:monthly")
+    .text(`🏆 $${PRICING.yearlyUsdc} Yearly`, "pay:yearly");
 }
 
 export function paymentLinkKeyboard(phantomUrl: string, solflareUrl: string): InlineKeyboard {
@@ -33,21 +36,20 @@ export function shareKeyboard(tier: PickTier): InlineKeyboard {
   );
 }
 
-export const DAILY_DROP_TEXT = `⚽ BIGGY DAILY COMBINATIONS ⚽
-The data engines have parsed today's lines and sentiment. Pick your goal for today:
+export const DAILY_DROP_TEXT = `⚽ Today's football picks
 
-🎯 Hit — capped under 2.0 odds. Safe, consistent wins.
-🏹 Aim — capped under 10.0 odds. The smart value play.
-🔥 Go Big — capped up to 120.0 odds. High-leverage parlay.
+🎯 Hit · under 2.0 combined
+🏹 Aim · under 10 combined
+🔥 Go Big · up to 120 combined
 
-Click a button below to get today's selections instantly:`;
+Tap a tier for today's slip:`;
 
-export const SUBSCRIBE_OFFER_TEXT = `💎 Unlock unlimited daily picks
+export const SUBSCRIBE_OFFER_TEXT = `💎 Unlimited daily football picks
 
-Early-Bird access: $5/month or $54/year (normally $10–$15). Pay with USDC via Phantom or Solflare — one tap:`;
+Biggy Premium: $${PRICING.monthlyUsdc}/month or $${PRICING.yearlyUsdc}/year (save ~${yearlySavingsPercent()}% vs monthly). Pay with USDC in Phantom or Solflare:`;
 
-export const PAYWALL_TEXT = `⚠️ Your 2 free trial picks are used!
+export const PAYWALL_TEXT = `⚠️ Your ${PRICING.trialPicks} free football trial slips are used.
 
-To keep getting daily data-driven match selections and avoid guessing on emotion, unlock Early-Bird access for just $5/month (normally $10–$15).
+Football picks for the World Cup. Premium from $${PRICING.monthlyUsdc}/month.
 
-Choose your plan to generate a fast Solana Pay link:`;
+Choose a plan for a Solana Pay link:`;

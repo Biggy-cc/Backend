@@ -136,7 +136,7 @@ function buildUnifiedPrompt(bundles: MatchBundle[], retryErrors?: string[]): str
     ? `\n\nFIX THESE ERRORS FROM LAST ATTEMPT:\n${retryErrors.map((e) => `- ${e}`).join("\n")}`
     : "";
 
-  return `You are Biggy, a data-driven football parlay assistant.
+  return `You are Biggy. Football picks, not generic sports tips.
 
 Produce ONE locked daily card for ALL users. All tiers must share the same match theses — never contradict (no Under 3.5 on a match in one tier and Over 3.5 in another).
 
@@ -316,7 +316,7 @@ async function generateDailyPicksInner(
         bundle = enrichBundleWithHeadlines(matchBundles, bundle);
       }
       const version = previous ? previous.version + 1 : 1;
-      const changeNote = "Full Biggy analysis added.";
+      const changeNote = "Breakdown updated.";
       if (previous && version > 1) {
         await archiveCurrentPicks(pickDate, previous.version);
       }
@@ -491,7 +491,7 @@ async function generateDailyPicksInner(
   if (previous && version > 1) {
     if (kickoffStale || usedOddsFallback) {
       changeNote =
-        "Earlier matches have kicked off — picks updated with the next upcoming games.";
+        "Earlier matches have kicked off. Picks updated with the next upcoming games.";
     } else {
       changeNote = await explainPickChanges(previous as StoredPickBatch, bundle);
     }

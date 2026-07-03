@@ -7,10 +7,21 @@ export const TIER_LIMITS: Record<PickTier, number> = {
 };
 
 export const TIER_LABELS: Record<PickTier, string> = {
-  hit: "🎯 Hit",
-  aim: "🏹 Aim",
-  go_big: "🔥 Go Big",
+  hit: "Hit",
+  aim: "Aim",
+  go_big: "Go Big",
 };
+
+/** Telegram text/buttons only — SVG icons cannot render inline in bot messages. */
+export const TIER_EMOJI: Record<PickTier, string> = {
+  hit: "🎯",
+  aim: "🏹",
+  go_big: "🔥",
+};
+
+export function formatTierLabel(tier: PickTier): string {
+  return `${TIER_EMOJI[tier]} ${TIER_LABELS[tier]}`;
+}
 
 export type PickSource = {
   label: string;
@@ -58,11 +69,11 @@ export function formatPickSlip(pick: GeneratedPick): string {
     )
     .join("\n\n");
 
-  return `${updateBanner}${escapeHtml(TIER_LABELS[pick.tier])} — Combined @ ${pick.combinedOdds.toFixed(2)}
+  return `${updateBanner}${escapeHtml(formatTierLabel(pick.tier))} · Combined @ ${pick.combinedOdds.toFixed(2)}
 
 ${legs}
 
-🧠 <b>Biggy Breakdown</b>
+<b>Biggy Breakdown</b>
 ${escapeHtml(pick.breakdown)}`;
 }
 
@@ -75,7 +86,7 @@ export function formatShareText(html: string): string {
   if (sourcesIdx > 0) {
     plain = plain.slice(0, sourcesIdx).trim();
   }
-  return `${plain}\n\n— ⚽ Get daily picks: t.me/BiggyCCBot`;
+  return `${plain}\n\n⚽ Football picks: t.me/BiggyCCBot`;
 }
 
 export function parseShareTier(query: string): PickTier | null {
