@@ -1,17 +1,9 @@
 import "dotenv/config";
 import { dbAll } from "../src/db/client.js";
-import { formatAccessStatus, hasAccess, trialPicksRemaining } from "../src/db/users.js";
+import { formatAccessStatus, hasAccess, trialPicksRemaining, type UserRow } from "../src/db/users.js";
 
 async function main() {
-  const users = await dbAll<{
-    telegram_id: number;
-    username: string | null;
-    trial_started_at: string;
-    subscribed_until: string | null;
-    early_bird: number;
-    trial_picks_used: number;
-    created_at: string;
-  }>(`SELECT * FROM users ORDER BY created_at ASC`);
+  const users = await dbAll<UserRow>(`SELECT * FROM users ORDER BY created_at ASC`);
 
   if (users.length === 0) {
     console.log("No users in database.");

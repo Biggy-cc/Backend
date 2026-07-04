@@ -47,6 +47,6 @@ export async function getUpcomingFixturesPayload(): Promise<FixtureApiItem[]> {
       name: f.Participant2,
       countryCode: teamToCountryCode(f.Participant2),
     },
-    kickoffAt: new Date(f.StartTime).toISOString(),
+    kickoffAt: new Date(fixtureKickoffMs(f)).toISOString(),
   }));
 }

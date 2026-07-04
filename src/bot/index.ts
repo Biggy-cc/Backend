@@ -1,20 +1,19 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import {
   DAILY_DROP_TEXT,
-  PAYWALL_TEXT,
   dailyMenuKeyboard,
   paymentLinkKeyboard,
   paymentWebKeyboard,
-  paywallKeyboard,
+  SUBSCRIBE_OFFER_TEXT,
   shareKeyboard,
 } from "./keyboards.js";
+import { replyIfPaywalled } from "./subscribe-offer.js";
 import { replyWithPickSlip } from "./tier-media.js";
 import { handleStart } from "./onboarding.js";
 import { handleFreeformMessage } from "./chat.js";
 import { BIGGY_HELP } from "./copy.js";
 import {
   formatAccessStatus,
-  hasAccess,
   recordTrialPickView,
   upsertUser,
 } from "../db/users.js";
@@ -74,10 +73,7 @@ export async function startBot() {
   bot.command("picks", async (ctx) => {
     if (!ctx.from) return;
     const user = await upsertUser(ctx.from.id, ctx.from.username);
-    if (!hasAccess(user)) {
-      await ctx.reply(PAYWALL_TEXT, { reply_markup: paywallKeyboard() });
-      return;
-    }
+    if (await replyIfPaywalled(ctx, user)) return;
     await ctx.reply(DAILY_DROP_TEXT, { reply_markup: dailyMenuKeyboard() });
   });
 
@@ -86,10 +82,7 @@ export async function startBot() {
     const tier = ctx.match![1] as PickTier;
     const user = await upsertUser(ctx.from!.id, ctx.from!.username);
 
-    if (!hasAccess(user)) {
-      await ctx.reply(PAYWALL_TEXT, { reply_markup: paywallKeyboard() });
-      return;
-    }
+    if (await replyIfPaywalled(ctx, user)) return;
 
     const pickDate = todayPickDate();
     let content = await getCachedPick(pickDate, tier);
@@ -187,45 +180,23 @@ export async function startBot() {
   bot.callbackQuery(/^pay:(monthly|yearly)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const plan = ctx.match![1] as "monthly" | "yearly";
-    const { amount, url, phantomUrl, solflareUrl, paymentId } = await createPaymentLink(
+    await upsertUser(ctx.from!.id, ctx.from!.username, ctx.from!.first_name);
+    const { phantomUrl, solflareUrl, paymentId, amount } = await createPaymentLink(
       ctx.from!.id,
       plan
     );
 
     const webBase = process.env.PAYMENT_WEB_URL?.trim().replace(/\/$/, "");
     if (webBase) {
-      const checkoutUrl = `${webBase}?id=${paymentId}`;
-      await ctx.reply(
-        `Pay <b>${amount} USDC</b> for Biggy Premium. Unlimited daily football picks.\n\n` +
-          `Tap the button below. Opens our checkout page in your browser (phone or desktop).\n\n` +
-          `I'll unlock you automatically within ~30 seconds after payment.`,
-        {
-          parse_mode: "HTML",
-          link_preview_options: { is_disabled: true },
-          reply_markup: paymentWebKeyboard(checkoutUrl),
-        }
-      );
+      await ctx.reply(`Pay $${amount} USDC for Biggy Premium ↗`, {
+        reply_markup: paymentWebKeyboard(`${webBase}?id=${encodeURIComponent(paymentId)}`),
+      });
       return;
     }
 
-    const safeUrl = url.replace(/&/g, "&amp;");
-
-    await ctx.reply(
-      `Pay <b>${amount} USDC</b> for Biggy Premium. Unlimited daily football picks.\n\n` +
-        `<b>Best on phone</b> (Phantom or Solflare installed):\n` +
-        `1. Tap a wallet button below\n` +
-        `2. Confirm the transfer in your wallet app\n\n` +
-        `If a button opens a website instead of your wallet, tap this link:\n` +
-        `<a href="${safeUrl}">Open payment in wallet</a>\n\n` +
-        `Still stuck? Tap ⋮ on the page, then <b>Open in browser</b>. That usually launches Phantom.\n` +
-        `Desktop Telegram can't open wallet apps. Use your phone.\n` +
-        `I'll unlock you automatically within ~30 seconds after payment.`,
-      {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-        reply_markup: paymentLinkKeyboard(phantomUrl, solflareUrl),
-      }
-    );
+    await ctx.reply(SUBSCRIBE_OFFER_TEXT, {
+      reply_markup: paymentLinkKeyboard(phantomUrl, solflareUrl),
+    });
   });
 
   bot.on("message:text", async (ctx) => {

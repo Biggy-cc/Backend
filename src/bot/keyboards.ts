@@ -11,10 +11,15 @@ export function dailyMenuKeyboard(): InlineKeyboard {
     .text(formatTierLabel("go_big"), "tier:go_big");
 }
 
-export function paywallKeyboard(): InlineKeyboard {
+export function subscribeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text(`📅 $${PRICING.monthlyUsdc} Monthly`, "pay:monthly")
     .text(`🏆 $${PRICING.yearlyUsdc} Yearly`, "pay:yearly");
+}
+
+/** @deprecated use subscribeKeyboard */
+export function paywallKeyboard(): InlineKeyboard {
+  return subscribeKeyboard();
 }
 
 export function paymentLinkKeyboard(phantomUrl: string, solflareUrl: string): InlineKeyboard {
@@ -22,6 +27,23 @@ export function paymentLinkKeyboard(phantomUrl: string, solflareUrl: string): In
     .url("👻 Pay in Phantom", phantomUrl)
     .row()
     .url("🔥 Pay in Solflare", solflareUrl);
+}
+
+/** Monthly/Yearly open the pay page directly (no extra bot message). */
+export function subscribeCheckoutKeyboard(
+  webBase: string,
+  monthlyId: string,
+  yearlyId: string
+): InlineKeyboard {
+  return new InlineKeyboard()
+    .url(
+      `📅 $${PRICING.monthlyUsdc} Monthly`,
+      `${webBase}?id=${encodeURIComponent(monthlyId)}`
+    )
+    .url(
+      `🏆 $${PRICING.yearlyUsdc} Yearly`,
+      `${webBase}?id=${encodeURIComponent(yearlyId)}`
+    );
 }
 
 export function paymentWebKeyboard(checkoutUrl: string): InlineKeyboard {
@@ -48,8 +70,4 @@ export const SUBSCRIBE_OFFER_TEXT = `💎 Unlimited daily football picks
 
 Biggy Premium: $${PRICING.monthlyUsdc}/month or $${PRICING.yearlyUsdc}/year (save ~${yearlySavingsPercent()}% vs monthly). Pay with USDC in Phantom or Solflare:`;
 
-export const PAYWALL_TEXT = `⚠️ Your ${PRICING.trialPicks} free football trial slips are used.
-
-Football picks for the World Cup. Premium from $${PRICING.monthlyUsdc}/month.
-
-Choose a plan for a Solana Pay link:`;
+export const PAYWALL_TEXT = `⚠️ Your ${PRICING.trialPicks} free football trial slips are used. Upgrade to keep getting daily picks.`;

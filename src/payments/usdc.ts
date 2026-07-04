@@ -57,6 +57,13 @@ export async function createPaymentLink(
   const id = randomUUID();
 
   await dbRun(
+    `DELETE FROM pending_payments
+     WHERE telegram_id = ? AND plan = ? AND fulfilled_at IS NULL`,
+    telegramId,
+    plan
+  );
+
+  await dbRun(
     `INSERT INTO pending_payments (id, telegram_id, plan, amount_usdc, reference)
      VALUES (?, ?, ?, ?, ?)`,
     id,

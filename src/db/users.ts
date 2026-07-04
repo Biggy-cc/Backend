@@ -3,11 +3,19 @@ import { dbAll, dbGet, dbRun } from "./client.js";
 export type UserRow = {
   telegram_id: number;
   username: string | null;
+  first_name: string | null;
+  photo_url: string | null;
   trial_started_at: string;
   subscribed_until: string | null;
   early_bird: number;
   trial_picks_used: number;
 };
+
+export function userDisplayName(user: Pick<UserRow, "first_name" | "username">): string {
+  if (user.first_name?.trim()) return user.first_name.trim();
+  if (user.username?.trim()) return user.username.trim();
+  return "Telegram user";
+}
 
 export function trialPickLimit(): number {
   return Number(process.env.TRIAL_PICKS ?? "2");
@@ -15,13 +23,20 @@ export function trialPickLimit(): number {
 
 export async function upsertUser(
   telegramId: number,
-  username?: string
+  username?: string,
+  firstName?: string,
+  photoUrl?: string
 ): Promise<UserRow> {
   await dbRun(
-    `INSERT INTO users (telegram_id, username) VALUES (?, ?)
-     ON CONFLICT(telegram_id) DO UPDATE SET username = COALESCE(excluded.username, users.username)`,
+    `INSERT INTO users (telegram_id, username, first_name, photo_url) VALUES (?, ?, ?, ?)
+     ON CONFLICT(telegram_id) DO UPDATE SET
+       username = COALESCE(excluded.username, users.username),
+       first_name = COALESCE(excluded.first_name, users.first_name),
+       photo_url = COALESCE(excluded.photo_url, users.photo_url)`,
     telegramId,
-    username ?? null
+    username ?? null,
+    firstName ?? null,
+    photoUrl ?? null
   );
 
   return (await getUser(telegramId))!;

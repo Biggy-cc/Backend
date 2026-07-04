@@ -3,6 +3,8 @@ export const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   telegram_id INTEGER PRIMARY KEY,
   username TEXT,
+  first_name TEXT,
+  photo_url TEXT,
   trial_started_at TEXT NOT NULL DEFAULT (datetime('now')),
   subscribed_until TEXT,
   early_bird INTEGER NOT NULL DEFAULT 0,
@@ -59,4 +61,6 @@ export const SQLITE_ALTER_STATEMENTS = [
   `ALTER TABLE daily_picks ADD COLUMN thesis_json TEXT`,
   `ALTER TABLE daily_picks ADD COLUMN change_note TEXT`,
   `ALTER TABLE users ADD COLUMN trial_picks_used INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN first_name TEXT`,
+  `ALTER TABLE users ADD COLUMN photo_url TEXT`,
 ];
