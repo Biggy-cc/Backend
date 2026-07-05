@@ -4,8 +4,8 @@ import {
   dailyMenuKeyboard,
   paymentLinkKeyboard,
   paymentWebKeyboard,
+  slipActionKeyboard,
   SUBSCRIBE_OFFER_TEXT,
-  shareKeyboard,
 } from "./keyboards.js";
 import { replyIfPaywalled } from "./subscribe-offer.js";
 import { replyWithPickSlip } from "./tier-media.js";
@@ -18,6 +18,12 @@ import {
   upsertUser,
 } from "../db/users.js";
 import { isPickContentStale, picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
+import {
+  deliverLivePanel,
+  pauseLiveWatch,
+  refreshLivePanelAfterPause,
+  startLiveWatchPoller,
+} from "../picks/live-watch.js";
 import {
   generateDailyPicks,
   getCachedPick,
@@ -112,9 +118,68 @@ export async function startBot() {
       return;
     }
 
-    await replyWithPickSlip(ctx, tier, content, shareKeyboard(tier));
+    await replyWithPickSlip(ctx, tier, content, slipActionKeyboard(tier));
+
+    try {
+      if (ctx.from && ctx.chat) {
+        await deliverLivePanel(bot, {
+          telegramId: ctx.from.id,
+          chatId: ctx.chat.id,
+          tier,
+          pickDate,
+        });
+      }
+    } catch (err) {
+      console.error("[bot] Live pitch block failed:", err);
+    }
 
     await recordTrialPickView(ctx.from!.id);
+  });
+
+  bot.callbackQuery(/^live:pause:(hit|aim|go_big)$/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Paused" });
+    if (!ctx.from) return;
+
+    const session = pauseLiveWatch(ctx.from.id);
+    if (session) {
+      try {
+        await refreshLivePanelAfterPause(bot, session);
+      } catch {
+        // panel may already be gone
+      }
+    }
+  });
+
+  bot.callbackQuery(/^live:(hit|aim|go_big)$/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Updating live…" });
+    const tier = ctx.match![1] as PickTier;
+    const user = await upsertUser(ctx.from!.id, ctx.from!.username);
+
+    if (await replyIfPaywalled(ctx, user)) return;
+    if (!ctx.from || !ctx.chat) return;
+
+    const pickDate = todayPickDate();
+    try {
+      const msg = ctx.callbackQuery.message;
+      const text = msg && "text" in msg ? msg.text : undefined;
+      const isLivePanel = text?.includes("Live on the pitch") ?? false;
+
+      const result = await deliverLivePanel(bot, {
+        telegramId: ctx.from.id,
+        chatId: ctx.chat.id,
+        tier,
+        pickDate,
+        messageId: isLivePanel && msg ? msg.message_id : undefined,
+        edit: isLivePanel,
+      });
+
+      if (!result) {
+        await ctx.reply("No slip cached for today yet. Try /picks in a moment.");
+      }
+    } catch (err) {
+      console.error("[bot] Live refresh failed:", err);
+      await ctx.reply("Could not refresh live data. Try again shortly.");
+    }
   });
 
   bot.on("inline_query", async (ctx) => {
@@ -223,6 +288,7 @@ export async function startBot() {
   console.log("Telegram bot polling…");
   const { startPaymentPoller } = await import("../payments/poller.js");
   startPaymentPoller();
+  startLiveWatchPoller(bot);
   await bot.start();
 
   return bot;

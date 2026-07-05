@@ -50,12 +50,22 @@ export function paymentWebKeyboard(checkoutUrl: string): InlineKeyboard {
   return new InlineKeyboard().url("💳 Pay with USDC", checkoutUrl);
 }
 
-/** Opens Telegram's share picker → inline result with the full slip. */
+/** Share + live pitch refresh for an open slip. */
+export function slipActionKeyboard(tier: PickTier, autoWatch = false): InlineKeyboard {
+  const kb = new InlineKeyboard()
+    .switchInline("📲 Share this Slip with Friends", tier)
+    .text("⚡ Refresh live", `live:${tier}`);
+
+  if (autoWatch) {
+    kb.row().text("🔕 Pause live updates", `live:pause:${tier}`);
+  }
+
+  return kb;
+}
+
+/** @deprecated use slipActionKeyboard */
 export function shareKeyboard(tier: PickTier): InlineKeyboard {
-  return new InlineKeyboard().switchInline(
-    "📲 Share this Slip with Friends",
-    tier
-  );
+  return slipActionKeyboard(tier);
 }
 
 export const DAILY_DROP_TEXT = `⚽ Today's football picks

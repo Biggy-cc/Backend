@@ -1,5 +1,6 @@
 import http from "node:http";
 import { getUpcomingFixturesPayload } from "./fixtures.js";
+import { getTrackRecordPayload } from "./track-record.js";
 import { readJsonBody } from "./body.js";
 import { getCheckoutSession, startWebCheckout } from "./checkout.js";
 import { getWebAccess } from "./access.js";
@@ -47,6 +48,19 @@ export function startApiServer(port: number) {
       } catch (err) {
         console.error("[api] /api/fixtures failed:", err);
         sendJson(res, 502, { error: "Could not load fixtures" });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/track-record") {
+      try {
+        const trackRecord = await getTrackRecordPayload();
+        sendJson(res, 200, { trackRecord }, {
+          "Cache-Control": "public, max-age=120",
+        });
+      } catch (err) {
+        console.error("[api] /api/track-record failed:", err);
+        sendJson(res, 502, { error: "Could not load track record" });
       }
       return;
     }

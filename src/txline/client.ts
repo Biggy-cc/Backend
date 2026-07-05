@@ -194,6 +194,32 @@ export async function fetchOddsForFixture(
   return normalizeOddsEntries(preferFullMatchRows(res.data), fixture);
 }
 
+export type TxlineScoreSnapshot = {
+  FixtureId?: number;
+  Participant1Goals?: number;
+  Participant2Goals?: number;
+  MatchMinute?: number;
+  MatchPeriod?: string;
+  IsFinished?: boolean;
+};
+
+/** Live scores — returns null when tier has no access (403) or match not started. */
+export async function fetchScoresSnapshot(
+  fixtureId: number
+): Promise<TxlineScoreSnapshot | null> {
+  try {
+    const client = createTxlineClient();
+    const res = await client.get<TxlineScoreSnapshot>(`/scores/snapshot/${fixtureId}`, {
+      headers: await authHeaders(),
+    });
+    return res.data ?? null;
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } }).response?.status;
+    if (status === 403 || status === 404) return null;
+    throw err;
+  }
+}
+
 export function fixtureKickoffMs(f: TxlineFixture): number {
   const t = f.StartTime;
   return t < 1e12 ? t * 1000 : t;
