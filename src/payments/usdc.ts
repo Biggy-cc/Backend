@@ -6,6 +6,7 @@ import {
   type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
 import { dbAll, dbRun } from "../db/client.js";
+import { extendSubscriptionUntil, getUser } from "../db/users.js";
 import { planAmountUsdc } from "../config/pricing.js";
 
 function buildWalletPayUrls(
@@ -119,6 +120,7 @@ export type PaidSubscription = {
   telegramId: number;
   plan: "monthly" | "yearly";
   amountUsdc: number;
+  renewsUntil: string;
 };
 
 export async function checkPendingPayments(
@@ -178,9 +180,8 @@ export async function checkPendingPayments(
       const amount = parseUsdcTransfer(tx, receiver, mint);
       if (amount === null || Math.abs(payment.amount_usdc - amount) >= 0.01) continue;
 
-      const days = payment.plan === "monthly" ? 30 : 365;
-      const until = new Date();
-      until.setUTCDate(until.getUTCDate() + days);
+      const user = await getUser(payment.telegram_id);
+      const until = extendSubscriptionUntil(user?.subscribed_until, payment.plan);
 
       await dbRun(
         `UPDATE users SET subscribed_until = ?, early_bird = 1 WHERE telegram_id = ?`,
@@ -197,6 +198,7 @@ export async function checkPendingPayments(
         telegramId: payment.telegram_id,
         plan: payment.plan,
         amountUsdc: payment.amount_usdc,
+        renewsUntil: until.toISOString(),
       });
       break;
     }

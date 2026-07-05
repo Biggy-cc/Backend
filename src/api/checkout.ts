@@ -1,4 +1,4 @@
-import { getUser, upsertUser } from "../db/users.js";
+import { getUser, upsertUser, extendSubscriptionUntil, formatSubscriptionDate, isSubscribed } from "../db/users.js";
 import { createPaymentLink } from "../payments/usdc.js";
 import { dbGet } from "../db/client.js";
 import { userHasTelegramAvatar } from "../telegram/profile.js";
@@ -32,6 +32,10 @@ export type CheckoutSession = {
   telegramFirstName: string | null;
   telegramPhotoUrl: string | null;
   telegramHasAvatar: boolean;
+  subscriptionActiveUntil: string | null;
+  subscriptionActiveUntilLabel: string | null;
+  subscriptionRenewsUntil: string;
+  subscriptionRenewsUntilLabel: string;
 };
 
 type CheckoutProfile = {
@@ -41,10 +45,40 @@ type CheckoutProfile = {
   telegramHasAvatar: boolean;
 };
 
+function subscriptionFields(
+  user: Awaited<ReturnType<typeof getUser>>,
+  plan: "monthly" | "yearly"
+): Pick<
+  CheckoutSession,
+  | "subscriptionActiveUntil"
+  | "subscriptionActiveUntilLabel"
+  | "subscriptionRenewsUntil"
+  | "subscriptionRenewsUntilLabel"
+> {
+  const activeUntil =
+    user && isSubscribed(user) && user.subscribed_until
+      ? user.subscribed_until
+      : null;
+  const renewsUntil = extendSubscriptionUntil(
+    user?.subscribed_until ?? null,
+    plan
+  ).toISOString();
+
+  return {
+    subscriptionActiveUntil: activeUntil,
+    subscriptionActiveUntilLabel: activeUntil
+      ? formatSubscriptionDate(activeUntil)
+      : null,
+    subscriptionRenewsUntil: renewsUntil,
+    subscriptionRenewsUntilLabel: formatSubscriptionDate(renewsUntil),
+  };
+}
+
 function toCheckoutSession(
   row: Pick<PendingPaymentRow, "id" | "telegram_id" | "plan" | "amount_usdc" | "reference" | "fulfilled_at">,
   reference: string,
-  profile: CheckoutProfile
+  profile: CheckoutProfile,
+  user: Awaited<ReturnType<typeof getUser>>
 ): CheckoutSession {
   const receiver = process.env.USDC_RECEIVER_WALLET;
   if (!receiver) {
@@ -77,6 +111,7 @@ function toCheckoutSession(
     fulfilled: row.fulfilled_at != null,
     telegramId: row.telegram_id,
     ...profile,
+    ...subscriptionFields(user, row.plan),
   };
 }
 
@@ -130,6 +165,7 @@ export async function startWebCheckout(
     telegramFirstName: telegramAuth.first_name,
     telegramPhotoUrl: telegramAuth.photo_url ?? null,
   });
+  const user = await getUser(telegramAuth.id);
 
   return toCheckoutSession(
     {
@@ -141,7 +177,8 @@ export async function startWebCheckout(
       fulfilled_at: null,
     },
     link.reference,
-    profile
+    profile,
+    user
   );
 }
 
@@ -157,8 +194,9 @@ export async function getCheckoutSession(
   if (!row) return null;
 
   const profile = await resolveCheckoutProfile(row.telegram_id);
+  const user = await getUser(row.telegram_id);
 
-  return toCheckoutSession(row, row.reference, profile);
+  return toCheckoutSession(row, row.reference, profile, user);
 }
 
 /** Create checkout links for bot subscribe buttons (Monthly + Yearly). */

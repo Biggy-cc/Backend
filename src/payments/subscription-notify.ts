@@ -1,10 +1,11 @@
 import type { Api } from "grammy";
-import { getUser, userDisplayName } from "../db/users.js";
+import { getUser, userDisplayName, formatSubscriptionDate } from "../db/users.js";
 
 export type NewSubscription = {
   telegramId: number;
   plan: "monthly" | "yearly";
   amountUsdc: number;
+  renewsUntil: string;
 };
 
 /** Telegram user to ping on new subscriptions (defaults to Dracklyn). Set to 0 to disable. */
@@ -47,6 +48,7 @@ export async function notifyNewSubscription(
     "",
     `User: ${label}`,
     `Plan: ${planLabel} · $${subscription.amountUsdc} USDC`,
+    `Active until: ${formatSubscriptionDate(subscription.renewsUntil)}`,
   ].join("\n");
 
   try {

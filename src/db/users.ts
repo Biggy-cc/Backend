@@ -56,6 +56,37 @@ function parseSubscribedUntil(value: string): Date {
   return new Date(`${value}Z`);
 }
 
+export function formatSubscriptionDate(value: string): string {
+  return parseSubscribedUntil(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function subscriptionPeriodDays(plan: "monthly" | "yearly"): number {
+  return plan === "monthly" ? 30 : 365;
+}
+
+/** Stack renewal on current expiry when still active; otherwise start from now. */
+export function extendSubscriptionUntil(
+  currentUntil: string | null | undefined,
+  plan: "monthly" | "yearly",
+  now: Date = new Date()
+): Date {
+  const base = new Date(now);
+
+  if (currentUntil) {
+    const existing = parseSubscribedUntil(currentUntil);
+    if (!Number.isNaN(existing.getTime()) && existing > base) {
+      base.setTime(existing.getTime());
+    }
+  }
+
+  base.setUTCDate(base.getUTCDate() + subscriptionPeriodDays(plan));
+  return base;
+}
+
 export function isSubscribed(user: UserRow): boolean {
   if (!user.subscribed_until) return false;
   const until = parseSubscribedUntil(user.subscribed_until);
@@ -85,13 +116,9 @@ export async function recordTrialPickView(telegramId: number): Promise<UserRow |
 
 export function formatAccessStatus(user: UserRow): string {
   if (isSubscribed(user)) {
-    const until = parseSubscribedUntil(user.subscribed_until!).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    const until = formatSubscriptionDate(user.subscribed_until!);
     const plan = user.early_bird ? "Premium (legacy rate)" : "Premium";
-    return `✅ ${plan} active until ${until}`;
+    return `✅ ${plan} active until ${until}. Renewal adds time on top.`;
   }
 
   const remaining = trialPicksRemaining(user);

@@ -2,6 +2,7 @@ import http from "node:http";
 import { getUpcomingFixturesPayload } from "./fixtures.js";
 import { readJsonBody } from "./body.js";
 import { getCheckoutSession, startWebCheckout } from "./checkout.js";
+import { getWebAccess } from "./access.js";
 import { serveTelegramAvatar } from "./telegram-avatar.js";
 import { getTelegramBotInfo } from "./telegram-bot.js";
 import { proxySolanaRpc } from "./solana-rpc.js";
@@ -70,6 +71,27 @@ export function startApiServer(port: number) {
 
     if (req.method === "POST" && url === "/api/solana-rpc") {
       await proxySolanaRpc(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/access") {
+      try {
+        const body = await readJsonBody<{ telegramAuth?: TelegramLoginPayload }>(req);
+
+        if (!body.telegramAuth) {
+          sendJson(res, 400, { error: "Telegram login required" });
+          return;
+        }
+
+        const access = await getWebAccess(body.telegramAuth);
+        sendJson(res, 200, { access }, { "Cache-Control": "no-store" });
+      } catch (err) {
+        console.error("[api] POST /api/access failed:", err);
+        const message =
+          err instanceof Error ? err.message : "Could not load access status";
+        const status = message.includes("Invalid Telegram") ? 401 : 502;
+        sendJson(res, status, { error: message });
+      }
       return;
     }
 

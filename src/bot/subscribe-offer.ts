@@ -15,6 +15,7 @@ import {
   hasAccess,
   isSubscribed,
   upsertUser,
+  formatSubscriptionDate,
   type UserRow,
 } from "../db/users.js";
 
@@ -33,6 +34,22 @@ async function replySubscribeOffer(ctx: Context): Promise<void> {
   await ctx.reply(SUBSCRIBE_OFFER_TEXT, { reply_markup: subscribeKeyboard() });
 }
 
+async function replyExtendOffer(ctx: Context, user: UserRow): Promise<void> {
+  const webBase = process.env.PAYMENT_WEB_URL?.trim().replace(/\/$/, "");
+  const until = formatSubscriptionDate(user.subscribed_until!);
+  const text = `Premium active until ${until}. Extend anytime — renewal adds time on top.`;
+
+  if (webBase && ctx.from) {
+    const { monthlyId, yearlyId } = await createBotSubscribeLinks(ctx.from.id);
+    await ctx.reply(text, {
+      reply_markup: subscribeCheckoutKeyboard(webBase, monthlyId, yearlyId),
+    });
+    return;
+  }
+
+  await ctx.reply(text, { reply_markup: subscribeKeyboard() });
+}
+
 /** Trial exhausted — status, then subscribe offer in a second message. */
 export async function replyPaywall(ctx: Context, user: UserRow): Promise<void> {
   await replyWithWelcomeBanner(ctx, `${formatAccessStatus(user)}\n\n${PAYWALL_TEXT}`);
@@ -47,7 +64,9 @@ export async function replyStartWithAccess(
   await replyWithWelcomeBanner(ctx, `${BIGGY_WELCOME}\n\n${formatAccessStatus(user)}`);
   await ctx.reply(DAILY_DROP_TEXT, { reply_markup: dailyMenuKeyboard() });
 
-  if (!isSubscribed(user)) {
+  if (isSubscribed(user)) {
+    await replyExtendOffer(ctx, user);
+  } else {
     await replySubscribeOffer(ctx);
   }
 }
