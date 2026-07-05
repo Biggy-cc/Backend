@@ -15,7 +15,7 @@ function mediaUrl(envKey: string, fallback?: string): string | undefined {
 export function welcomeBannerUrl(): string | undefined {
   return mediaUrl(
     "TELEGRAM_WELCOME_BANNER_URL",
-    `${DEFAULT_TELEGRAM_BANNERS}/welcome-banner.gif`
+    `${DEFAULT_TELEGRAM_BANNERS}/welcome-banner.mp4`
   );
 }
 
@@ -28,7 +28,7 @@ export function slipBannerUrl(tier: PickTier): string | undefined {
         : "TELEGRAM_SLIP_GOBIG_BANNER_URL";
   const tierSlug = tier === "go_big" ? "gobig" : tier;
   return (
-    mediaUrl(tierKey, `${DEFAULT_TELEGRAM_BANNERS}/slip-${tierSlug}.gif`) ??
+    mediaUrl(tierKey, `${DEFAULT_TELEGRAM_BANNERS}/slip-${tierSlug}.mp4`) ??
     mediaUrl("TELEGRAM_SLIP_BANNER_URL")
   );
 }
