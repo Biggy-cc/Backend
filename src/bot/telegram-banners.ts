@@ -6,7 +6,7 @@ const MEDIA_EXT = /\.(png|jpe?g|webp|gif|mp4)(\?|$)/i;
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const DEFAULT_TELEGRAM_BANNERS = "https://biggy.cc/telegram";
 /** Bump when banner assets change so Telegram re-fetches instead of serving stale media. */
-const BANNER_CACHE_VERSION = "4";
+const BANNER_CACHE_VERSION = "5";
 
 type CachedBanner = {
   bytes: Buffer;
