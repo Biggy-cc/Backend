@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import { generateDailyPicks, todayPickDate } from "../picks/generate.js";
 import { picksStaleDueToKickoff } from "../picks/kickoff.js";
+import { refreshStoredOdds } from "../picks/odds-refresh.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { listActiveUserIds } from "../db/users.js";
 
@@ -10,9 +11,18 @@ export async function runRefreshPicks(bot: Bot) {
 
   try {
     const kickoffStale = await picksStaleDueToKickoff(pickDate);
-    const result = kickoffStale
-      ? await generateDailyPicks(pickDate, { kickoffRefresh: true })
-      : await generateDailyPicks(pickDate, { onlyIfChanged: true });
+    let result;
+
+    if (kickoffStale) {
+      result = await generateDailyPicks(pickDate, { kickoffRefresh: true });
+    } else {
+      const oddsRefresh = await refreshStoredOdds(pickDate);
+      if (oddsRefresh?.updated) {
+        result = oddsRefresh;
+      } else {
+        result = await generateDailyPicks(pickDate, { onlyIfChanged: true });
+      }
+    }
 
     if (!result.updated || result.version <= 1) {
       console.log("[refresh] No update needed");
@@ -25,9 +35,12 @@ export async function runRefreshPicks(bot: Bot) {
     }
 
     const userIds = await listActiveUserIds();
-    const notice = kickoffStale
-      ? `⏱️ <b>Fixtures kicked off. Fresh football card (v${result.version})</b>\n\n${result.changeNote ?? "Picks updated with the next upcoming matches."}\n\nTap a tier for the latest slip:`
-      : `📋 <b>Biggy football update (v${result.version})</b>\n\n${result.changeNote ?? "Today's football picks are refreshed."}\n\nTap a tier for the latest slip:`;
+    const notice =
+      result.refreshKind === "odds"
+        ? `📋 <b>Updated (v${result.version})</b>\n\n${result.changeNote ?? "Lines moved on today's card."}\n\nTap a tier for the latest slip:`
+        : kickoffStale
+          ? `⏱️ <b>Fixtures kicked off. Fresh football card (v${result.version})</b>\n\n${result.changeNote ?? "Picks updated with the next upcoming matches."}\n\nTap a tier for the latest slip:`
+          : `📋 <b>Biggy football update (v${result.version})</b>\n\n${result.changeNote ?? "Today's football picks are refreshed."}\n\nTap a tier for the latest slip:`;
 
     console.log(`[refresh] Broadcasting v${result.version} to ${userIds.length} users`);
 

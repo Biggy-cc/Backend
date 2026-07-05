@@ -59,6 +59,8 @@ export type GenerateResult = {
   version: number;
   updated: boolean;
   changeNote: string | null;
+  /** Set when refresh came from odds-only path (no LLM regen). */
+  refreshKind?: "odds" | "full";
 };
 
 let generationInFlight: Promise<GenerateResult> | null = null;

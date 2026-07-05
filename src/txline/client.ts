@@ -60,6 +60,7 @@ export function createTxlineClient(): AxiosInstance {
 
 export type RawTxlineOdds = {
   FixtureId: number;
+  Ts?: number;
   SuperOddsType?: string;
   MarketType?: string;
   MarketPeriod?: string | null;

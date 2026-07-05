@@ -6,6 +6,12 @@ import {
   scoreForPickLabel,
   type HighlightlyMatch,
 } from "../highlightly/client.js";
+import {
+  findReplayOddsForLeg,
+  loadTxlineScoresForDate,
+  oddsWithinTolerance,
+  type TxlineScoreReplay,
+} from "../txline/historical.js";
 import type { PickTier } from "./types.js";
 import type { DailyPicksBundle } from "./validate.js";
 
@@ -34,6 +40,9 @@ export type TrackRecordWin = {
   bet: string;
   odds: string;
   date: string;
+  /** TxLINE replay closing line when available. */
+  closingOdds?: string | null;
+  oddsVerified?: boolean;
 };
 
 export type TrackRecordPayload = {
@@ -46,6 +55,11 @@ export type TrackRecordPayload = {
   stats: {
     settledLegs: { wins: number; total: number };
     hitLegs: { wins: number; total: number };
+  };
+  provenance: {
+    scoreSources: { highlightly: number; txline: number; manual: number };
+    oddsVerifiedLegs: number;
+    settledLegs: number;
   };
   recentWins: TrackRecordWin[];
   updatedAt: string;
@@ -178,14 +192,32 @@ export function gradeLegAtFullTime(leg: PickLeg): boolean | null {
 function gradeLegForRecord(
   leg: PickLeg,
   pickDate: string,
-  hlByDate: Map<string, Map<string, HighlightlyMatch>>
+  hlByDate: Map<string, Map<string, HighlightlyMatch>>,
+  txByDate: Map<string, Map<string, TxlineScoreReplay>>,
+  scoreSources: { highlightly: number; txline: number; manual: number }
 ): boolean | null {
   const hl = hlByDate.get(pickDate)?.get(normalizeMatchKey(leg.match));
   if (hl && isHighlightlyFinished(hl)) {
     const score = scoreForPickLabel(leg.match, hl);
-    if (score) return gradeLegWithScore(leg, score);
+    if (score) {
+      scoreSources.highlightly++;
+      return gradeLegWithScore(leg, score);
+    }
   }
-  return gradeLegAtFullTime(leg);
+
+  const tx = txByDate.get(pickDate)?.get(normalizeMatchKey(leg.match));
+  if (tx?.finished) {
+    scoreSources.txline++;
+    return gradeLegWithScore(leg, { home: tx.home, away: tx.away });
+  }
+
+  const manual = matchScore(leg.match);
+  if (manual) {
+    scoreSources.manual++;
+    return gradeLegWithScore(leg, manual);
+  }
+
+  return null;
 }
 
 export type LegLiveProgress = {
@@ -306,7 +338,12 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
     if (!prev || b.version > prev.version) latestByDate.set(b.pick_date, b);
   }
 
+  const tiers: PickTier[] = ["hit", "aim", "go_big"];
   const hlByDate = new Map<string, Map<string, HighlightlyMatch>>();
+  const txByDate = new Map<string, Map<string, TxlineScoreReplay>>();
+  const scoreSources = { highlightly: 0, txline: 0, manual: 0 };
+  const replayEnabled = process.env.TXLINE_REPLAY_GRADING !== "0";
+
   if (isHighlightlyConfigured()) {
     for (const [date, batch] of latestByDate) {
       const picks = JSON.parse(batch.picks_json) as DailyPicksBundle["picks"];
@@ -322,7 +359,13 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
     }
   }
 
-  const tiers: PickTier[] = ["hit", "aim", "go_big"];
+  if (replayEnabled) {
+    for (const [date] of latestByDate) {
+      const txMap = await loadTxlineScoresForDate(date);
+      if (txMap.size > 0) txByDate.set(date, txMap);
+    }
+  }
+
   let legWins = 0;
   let legLosses = 0;
   let hitWins = 0;
@@ -337,7 +380,7 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
       if (!slip?.legs?.length) continue;
 
       for (const leg of slip.legs) {
-        const grade = gradeLegForRecord(leg, date, hlByDate);
+        const grade = gradeLegForRecord(leg, date, hlByDate, txByDate, scoreSources);
         if (grade === null) continue;
         if (grade) {
           legWins++;
@@ -362,6 +405,17 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
     date,
   }));
 
+  let oddsVerifiedLegs = 0;
+  if (replayEnabled) {
+    for (const win of recentWins) {
+      const replay = await findReplayOddsForLeg(win.match, win.bet, win.date);
+      if (!replay) continue;
+      win.closingOdds = replay.odds.toFixed(2);
+      win.oddsVerified = oddsWithinTolerance(parseFloat(win.odds), replay.odds);
+      if (win.oddsVerified) oddsVerifiedLegs++;
+    }
+  }
+
   return {
     streak: {
       wins: hitWins,
@@ -372,6 +426,11 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
     stats: {
       settledLegs: { wins: legWins, total: settledTotal },
       hitLegs: { wins: hitWins, total: hitTotal },
+    },
+    provenance: {
+      scoreSources,
+      oddsVerifiedLegs,
+      settledLegs: settledTotal,
     },
     recentWins: recentWins.reverse(),
     updatedAt: new Date().toISOString(),

@@ -75,6 +75,21 @@ export function summarizePickChanges(
   return "Today's football picks are refreshed.";
 }
 
+export function summarizeOddsMoves(
+  moves: Array<{ match: string; selection: string; from: number; to: number }>
+): string {
+  if (moves.length === 0) return "Lines refreshed.";
+  const shortTeam = (match: string) => match.split(/\s+vs\s+/i)[0]?.trim() ?? match;
+  if (moves.length === 1) {
+    const m = moves[0]!;
+    return `${shortTeam(m.match)} line moved (${m.from.toFixed(2)} → ${m.to.toFixed(2)}).`;
+  }
+  const parts = moves
+    .slice(0, 3)
+    .map((m) => `${shortTeam(m.match)} (${m.from.toFixed(2)} → ${m.to.toFixed(2)})`);
+  return `${moves.length} lines moved — ${parts.join("; ")}.`;
+}
+
 export async function explainPickChanges(
   previous: StoredPickBatch,
   next: DailyPicksBundle
