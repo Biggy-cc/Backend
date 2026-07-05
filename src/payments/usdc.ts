@@ -6,6 +6,7 @@ import {
   type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
 import { dbAll, dbRun } from "../db/client.js";
+import { planAmountUsdc } from "../config/pricing.js";
 
 function buildWalletPayUrls(
   receiver: string,
@@ -47,10 +48,7 @@ export async function createPaymentLink(
   const receiver = process.env.USDC_RECEIVER_WALLET;
   if (!receiver) throw new Error("USDC_RECEIVER_WALLET missing");
 
-  const amount =
-    plan === "monthly"
-      ? Number(process.env.MONTHLY_USDC ?? "9")
-      : Number(process.env.YEARLY_USDC ?? "79");
+  const amount = planAmountUsdc(telegramId, plan);
 
   // Solana Pay requires a real pubkey as reference — text IDs break wallet deep links.
   const referenceKey = Keypair.generate().publicKey.toBase58();
