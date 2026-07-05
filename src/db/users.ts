@@ -64,6 +64,10 @@ export function formatSubscriptionDate(value: string): string {
   });
 }
 
+export function paymentVerifiedMessage(subscribedUntil: string): string {
+  return `✅ Payment verified. Biggy Premium active until ${formatSubscriptionDate(subscribedUntil)}.`;
+}
+
 export function subscriptionPeriodDays(plan: "monthly" | "yearly"): number {
   return plan === "monthly" ? 30 : 365;
 }

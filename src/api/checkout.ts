@@ -47,7 +47,8 @@ type CheckoutProfile = {
 
 function subscriptionFields(
   user: Awaited<ReturnType<typeof getUser>>,
-  plan: "monthly" | "yearly"
+  plan: "monthly" | "yearly",
+  fulfilled: boolean
 ): Pick<
   CheckoutSession,
   | "subscriptionActiveUntil"
@@ -55,6 +56,17 @@ function subscriptionFields(
   | "subscriptionRenewsUntil"
   | "subscriptionRenewsUntilLabel"
 > {
+  if (fulfilled && user?.subscribed_until) {
+    const until = user.subscribed_until;
+    const untilLabel = formatSubscriptionDate(until);
+    return {
+      subscriptionActiveUntil: until,
+      subscriptionActiveUntilLabel: untilLabel,
+      subscriptionRenewsUntil: until,
+      subscriptionRenewsUntilLabel: untilLabel,
+    };
+  }
+
   const activeUntil =
     user && isSubscribed(user) && user.subscribed_until
       ? user.subscribed_until
@@ -111,7 +123,7 @@ function toCheckoutSession(
     fulfilled: row.fulfilled_at != null,
     telegramId: row.telegram_id,
     ...profile,
-    ...subscriptionFields(user, row.plan),
+    ...subscriptionFields(user, row.plan, row.fulfilled_at != null),
   };
 }
 

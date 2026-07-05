@@ -1,4 +1,5 @@
 import { getBot } from "../bot/index.js";
+import { paymentVerifiedMessage } from "../db/users.js";
 import { checkPendingPayments } from "./usdc.js";
 import { notifyNewSubscription } from "./subscription-notify.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
@@ -22,7 +23,7 @@ export function startPaymentPoller() {
 
         await bot.api.sendMessage(
           telegramId,
-          "✅ Payment verified. Welcome to Biggy Premium. Unlimited daily football picks.",
+          paymentVerifiedMessage(payment.renewsUntil)
         );
 
         await notifyNewSubscription(bot.api, payment);
