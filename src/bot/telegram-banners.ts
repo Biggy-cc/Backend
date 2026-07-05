@@ -4,15 +4,19 @@ import type { PickTier } from "../picks/types.js";
 
 const MEDIA_EXT = /\.(png|jpe?g|webp|gif|mp4)(\?|$)/i;
 const TELEGRAM_CAPTION_LIMIT = 1024;
+const DEFAULT_TELEGRAM_BANNERS = "https://biggy.cc/telegram";
 
-function mediaUrl(envKey: string): string | undefined {
-  const url = process.env[envKey]?.trim();
+function mediaUrl(envKey: string, fallback?: string): string | undefined {
+  const url = process.env[envKey]?.trim() || fallback;
   if (!url || !MEDIA_EXT.test(url)) return undefined;
   return url;
 }
 
 export function welcomeBannerUrl(): string | undefined {
-  return mediaUrl("TELEGRAM_WELCOME_BANNER_URL");
+  return mediaUrl(
+    "TELEGRAM_WELCOME_BANNER_URL",
+    `${DEFAULT_TELEGRAM_BANNERS}/welcome-banner.gif`
+  );
 }
 
 export function slipBannerUrl(tier: PickTier): string | undefined {
@@ -22,7 +26,11 @@ export function slipBannerUrl(tier: PickTier): string | undefined {
       : tier === "aim"
         ? "TELEGRAM_SLIP_AIM_BANNER_URL"
         : "TELEGRAM_SLIP_GOBIG_BANNER_URL";
-  return mediaUrl(tierKey) ?? mediaUrl("TELEGRAM_SLIP_BANNER_URL");
+  const tierSlug = tier === "go_big" ? "gobig" : tier;
+  return (
+    mediaUrl(tierKey, `${DEFAULT_TELEGRAM_BANNERS}/slip-${tierSlug}.gif`) ??
+    mediaUrl("TELEGRAM_SLIP_BANNER_URL")
+  );
 }
 
 function isAnimated(url: string): boolean {
