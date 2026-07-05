@@ -38,6 +38,10 @@
     "rss-parser": "^3.13.0",
     "tweetnacl": "^1.0.3"
   },
+  "optionalDependencies": {
+    "fastestsmallesttextencoderdecoder": "1.0.22",
+    "utf-8-validate": "5.0.10"
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.10",
