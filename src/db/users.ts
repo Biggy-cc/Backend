@@ -49,9 +49,17 @@ export async function getUser(telegramId: number): Promise<UserRow | null> {
   );
 }
 
+function parseSubscribedUntil(value: string): Date {
+  if (value.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+  return new Date(`${value}Z`);
+}
+
 export function isSubscribed(user: UserRow): boolean {
   if (!user.subscribed_until) return false;
-  return new Date(`${user.subscribed_until}Z`) > new Date();
+  const until = parseSubscribedUntil(user.subscribed_until);
+  return !Number.isNaN(until.getTime()) && until > new Date();
 }
 
 export function trialPicksRemaining(user: UserRow): number {
@@ -77,7 +85,7 @@ export async function recordTrialPickView(telegramId: number): Promise<UserRow |
 
 export function formatAccessStatus(user: UserRow): string {
   if (isSubscribed(user)) {
-    const until = new Date(`${user.subscribed_until}Z`).toLocaleDateString("en-US", {
+    const until = parseSubscribedUntil(user.subscribed_until!).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
