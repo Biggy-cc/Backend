@@ -1,5 +1,6 @@
 import { getBot } from "../bot/index.js";
 import { checkPendingPayments } from "./usdc.js";
+import { notifyNewSubscription } from "./subscription-notify.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { PICK_PARSE_MODE } from "../picks/types.js";
@@ -16,11 +17,15 @@ export function startPaymentPoller() {
       const bot = getBot();
       if (!bot) return;
 
-      await checkPendingPayments(async (telegramId) => {
+      await checkPendingPayments(async (payment) => {
+        const { telegramId } = payment;
+
         await bot.api.sendMessage(
           telegramId,
           "✅ Payment verified. Welcome to Biggy Premium. Unlimited daily football picks.",
         );
+
+        await notifyNewSubscription(bot.api, payment);
 
         const hit = await getCachedPick(todayPickDate(), "hit");
         if (hit) {

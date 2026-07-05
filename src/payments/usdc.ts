@@ -115,8 +115,14 @@ function txIncludesReference(tx: ParsedTransactionWithMeta, reference: PublicKey
   return keys.includes(reference.toBase58());
 }
 
+export type PaidSubscription = {
+  telegramId: number;
+  plan: "monthly" | "yearly";
+  amountUsdc: number;
+};
+
 export async function checkPendingPayments(
-  onPaid: (telegramId: number, plan: "monthly" | "yearly") => Promise<void>
+  onPaid: (payment: PaidSubscription) => Promise<void>
 ) {
   const receiverStr = process.env.USDC_RECEIVER_WALLET;
   const mintStr = process.env.USDC_MINT;
@@ -187,7 +193,11 @@ export async function checkPendingPayments(
         payment.id
       );
 
-      await onPaid(payment.telegram_id, payment.plan);
+      await onPaid({
+        telegramId: payment.telegram_id,
+        plan: payment.plan,
+        amountUsdc: payment.amount_usdc,
+      });
       break;
     }
   }
