@@ -51,5 +51,5 @@ npm run picks:generate
 - **Stack:** Node 20 + TypeScript + grammY
 - **Data:** TxLINE World Cup free tier (SL 12 real-time)
 - **Context:** Google News RSS → Gemini
-- **Trial:** 7 days from `/start`
+- **Trial:** 2 free pick slips per user (`TRIAL_PICKS=2`; each tier view counts as one)
 - **Pricing:** 9 USDC/month · 79 USDC/year

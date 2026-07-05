@@ -8,6 +8,7 @@ import {
   subscribeKeyboard,
 } from "./keyboards.js";
 import { BIGGY_WELCOME } from "./copy.js";
+import { replyWithWelcomeBanner } from "./telegram-banners.js";
 import { createBotSubscribeLinks } from "../api/checkout.js";
 import {
   formatAccessStatus,
@@ -34,7 +35,7 @@ async function replySubscribeOffer(ctx: Context): Promise<void> {
 
 /** Trial exhausted — status, then subscribe offer in a second message. */
 export async function replyPaywall(ctx: Context, user: UserRow): Promise<void> {
-  await ctx.reply(`${formatAccessStatus(user)}\n\n${PAYWALL_TEXT}`);
+  await replyWithWelcomeBanner(ctx, `${formatAccessStatus(user)}\n\n${PAYWALL_TEXT}`);
   await replySubscribeOffer(ctx);
 }
 
@@ -43,7 +44,7 @@ export async function replyStartWithAccess(
   ctx: Context,
   user: UserRow
 ): Promise<void> {
-  await ctx.reply(`${BIGGY_WELCOME}\n\n${formatAccessStatus(user)}`);
+  await replyWithWelcomeBanner(ctx, `${BIGGY_WELCOME}\n\n${formatAccessStatus(user)}`);
   await ctx.reply(DAILY_DROP_TEXT, { reply_markup: dailyMenuKeyboard() });
 
   if (!isSubscribed(user)) {
@@ -56,7 +57,7 @@ export async function replyStartPaywalled(
   ctx: Context,
   user: UserRow
 ): Promise<void> {
-  await ctx.reply(`${BIGGY_WELCOME}\n\n${formatAccessStatus(user)}`);
+  await replyWithWelcomeBanner(ctx, `${BIGGY_WELCOME}\n\n${formatAccessStatus(user)}`);
   await ctx.reply(PAYWALL_TEXT);
   await replySubscribeOffer(ctx);
 }
