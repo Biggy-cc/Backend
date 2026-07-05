@@ -342,7 +342,7 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
   const hlByDate = new Map<string, Map<string, HighlightlyMatch>>();
   const txByDate = new Map<string, Map<string, TxlineScoreReplay>>();
   const scoreSources = { highlightly: 0, txline: 0, manual: 0 };
-  const replayEnabled = process.env.TXLINE_REPLAY_GRADING !== "0";
+  const replayEnabled = process.env.TXLINE_REPLAY_GRADING === "1";
 
   if (isHighlightlyConfigured()) {
     for (const [date, batch] of latestByDate) {
