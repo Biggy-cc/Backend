@@ -23,8 +23,10 @@ import {
   buildLivePitchBlock,
 } from "../picks/live-tracker.js";
 import {
+  clearPausedLiveFeed,
   pauseLiveWatch,
   registerSlipLiveFeed,
+  resumeLiveFeed,
   startLiveWatchPoller,
   stopLiveFeed,
 } from "../picks/live-watch.js";
@@ -141,6 +143,7 @@ async function startBotPolling(): Promise<void> {
     }
 
     pauseLiveWatch(ctx.from!.id);
+    clearPausedLiveFeed(ctx.from!.id);
 
     const block = await buildLivePitchBlock(pickDate, tier, { tier });
     const slipBody =

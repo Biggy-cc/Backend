@@ -26,8 +26,21 @@ export type LiveWatchSession = {
   startedAt: number;
 };
 
+type PausedLiveFeed = {
+  chatId: number;
+  messageId: number;
+  tier: PickTier;
+  pickDate: string;
+  slipContent: string;
+};
+
 const sessions = new Map<number, LiveWatchSession>();
+const pausedFeeds = new Map<number, PausedLiveFeed>();
 let pollerStarted = false;
+
+export function clearPausedLiveFeed(telegramId: number): void {
+  pausedFeeds.delete(telegramId);
+}
 
 export function getLiveWatchSession(telegramId: number): LiveWatchSession | undefined {
   return sessions.get(telegramId);
@@ -269,14 +282,62 @@ export async function stopLiveFeed(bot: Bot, telegramId: number): Promise<boolea
   const session = pauseLiveWatch(telegramId);
   if (!session) return false;
 
+  pausedFeeds.set(telegramId, {
+    chatId: session.chatId,
+    messageId: session.messageId,
+    tier: session.tier,
+    pickDate: session.pickDate,
+    slipContent: session.slipContent,
+  });
+
   try {
     await bot.api.editMessageText(session.chatId, session.messageId, session.slipContent, {
       parse_mode: PICK_PARSE_MODE,
       reply_markup: slipActionKeyboard(session.tier),
     });
   } catch {
-    // message may be gone — session is already cleared
+    pausedFeeds.delete(telegramId);
   }
 
   return true;
+}
+
+export type ResumeLiveFeedResult = "resumed" | "already_active" | "nothing_paused" | "no_legs";
+
+/** Resume auto-updates on the last paused slip. */
+export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<ResumeLiveFeedResult> {
+  if (sessions.has(telegramId)) return "already_active";
+
+  const paused = pausedFeeds.get(telegramId);
+  if (!paused) return "nothing_paused";
+
+  const block = await buildLivePitchBlock(paused.pickDate, paused.tier, {
+    tier: paused.tier,
+    fresh: true,
+  });
+  if (!block?.legs.length) {
+    pausedFeeds.delete(telegramId);
+    return "no_legs";
+  }
+
+  if (allLegsFinished(block.legs)) {
+    pausedFeeds.delete(telegramId);
+    return "no_legs";
+  }
+
+  try {
+    await startSlipLiveFeed(bot, {
+      telegramId,
+      chatId: paused.chatId,
+      messageId: paused.messageId,
+      tier: paused.tier,
+      pickDate: paused.pickDate,
+      slipContent: paused.slipContent,
+      legs: block.legs,
+    });
+    pausedFeeds.delete(telegramId);
+    return "resumed";
+  } catch {
+    return "nothing_paused";
+  }
 }

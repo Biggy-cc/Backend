@@ -9,7 +9,7 @@ import { handleStart } from "./onboarding.js";
 import { replyIfPaywalled } from "./subscribe-offer.js";
 import { formatAccessStatus, upsertUser } from "../db/users.js";
 import type { Bot } from "grammy";
-import { stopLiveFeed } from "../picks/live-watch.js";
+import { resumeLiveFeed, stopLiveFeed } from "../picks/live-watch.js";
 
 /**
  * Routes plain-text chat (no slash commands).
@@ -40,6 +40,23 @@ export async function handleFreeformMessage(
     if (bot) {
       const stopped = await stopLiveFeed(bot, ctx.from.id);
       await ctx.reply(stopped ? "Live feed stopped." : "No active live feed on your slip.");
+      return;
+    }
+  }
+
+  if (intent === "start_live") {
+    if (await replyIfPaywalled(ctx, user)) return;
+    if (bot) {
+      const result = await resumeLiveFeed(bot, ctx.from.id);
+      const reply =
+        result === "resumed"
+          ? "Live feed resumed on your slip."
+          : result === "already_active"
+            ? "Live feed is already running."
+            : result === "no_legs"
+              ? "No live matches left on that slip. Open today's picks with /picks."
+              : "No paused live feed. Open a slip with /picks first.";
+      await ctx.reply(reply);
       return;
     }
   }

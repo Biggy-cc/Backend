@@ -4,15 +4,20 @@ export type ChatIntent =
   | "status"
   | "picks"
   | "stop_live"
+  | "start_live"
   | "unknown";
 
 const START_RE = /^(?:start|begin)(?:[!.\s]|$)/i;
 const STOP_LIVE_RE =
   /^(?:stop|pause|end)\s+(?:the\s+)?live(?:\s+feed)?(?:[!.\s]|$)|^stop\s+live\s+feed$/i;
+const START_LIVE_RE =
+  /^(?:start|resume)\s+(?:the\s+)?live(?:\s+feed)?(?:[!.\s]|$)|^start\s+live\s+feed$/i;
 
 export function parseChatIntent(raw: string): ChatIntent {
   const text = raw.trim().toLowerCase();
   if (!text) return "unknown";
+
+  if (START_LIVE_RE.test(text) || text === "start live feed") return "start_live";
 
   if (START_RE.test(text)) return "start";
 
