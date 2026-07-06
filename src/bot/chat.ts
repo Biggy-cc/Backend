@@ -8,12 +8,18 @@ import { BIGGY_GREETING_HINT, BIGGY_UNKNOWN } from "./copy.js";
 import { handleStart } from "./onboarding.js";
 import { replyIfPaywalled } from "./subscribe-offer.js";
 import { formatAccessStatus, upsertUser } from "../db/users.js";
+import type { Bot } from "grammy";
+import { stopLiveFeed } from "../picks/live-watch.js";
 
 /**
  * Routes plain-text chat (no slash commands).
  * Today: keyword intents. Later: Gemini conversation when CONVERSATIONAL_CHAT=1.
  */
-export async function handleFreeformMessage(ctx: Context, rawText: string): Promise<void> {
+export async function handleFreeformMessage(
+  ctx: Context,
+  rawText: string,
+  bot?: Bot
+): Promise<void> {
   if (!ctx.from) return;
 
   const user = await upsertUser(ctx.from.id, ctx.from.username);
@@ -28,6 +34,14 @@ export async function handleFreeformMessage(ctx: Context, rawText: string): Prom
   if (intent === "start") {
     await handleStart(ctx);
     return;
+  }
+
+  if (intent === "stop_live") {
+    if (bot) {
+      const stopped = await stopLiveFeed(bot, ctx.from.id);
+      await ctx.reply(stopped ? "Live feed stopped." : "No active live feed on your slip.");
+      return;
+    }
   }
 
   if (await replyIfPaywalled(ctx, user)) return;

@@ -19,10 +19,14 @@ import {
 } from "../db/users.js";
 import { isPickContentStale, picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import {
-  deliverLivePanel,
+  appendLiveSection,
+  buildLivePitchBlock,
+} from "../picks/live-tracker.js";
+import {
   pauseLiveWatch,
-  refreshLivePanelAfterPause,
+  registerSlipLiveFeed,
   startLiveWatchPoller,
+  stopLiveFeed,
 } from "../picks/live-watch.js";
 import {
   generateDailyPicks,
@@ -83,6 +87,12 @@ async function startBotPolling(): Promise<void> {
     await ctx.reply(BIGGY_HELP);
   });
 
+  bot.command("stoplive", async (ctx) => {
+    if (!ctx.from) return;
+    const stopped = await stopLiveFeed(bot, ctx.from.id);
+    await ctx.reply(stopped ? "Live feed stopped." : "No active live feed on your slip.");
+  });
+
   bot.command("picks", async (ctx) => {
     if (!ctx.from) return;
     const user = await upsertUser(ctx.from.id, ctx.from.username);
@@ -130,68 +140,33 @@ async function startBotPolling(): Promise<void> {
       return;
     }
 
-    await replyWithPickSlip(ctx, tier, content, slipActionKeyboard(tier));
+    pauseLiveWatch(ctx.from!.id);
+
+    const block = await buildLivePitchBlock(pickDate, tier, { tier });
+    const slipBody =
+      block?.legs.length
+        ? appendLiveSection(content, block.legs, tier, { autoWatch: true })
+        : content;
+
+    const messageId = await replyWithPickSlip(ctx, tier, slipBody, slipActionKeyboard(tier));
 
     try {
-      if (ctx.from && ctx.chat) {
-        await deliverLivePanel(bot, {
+      if (ctx.from && ctx.chat && messageId && block?.legs.length) {
+        registerSlipLiveFeed({
           telegramId: ctx.from.id,
           chatId: ctx.chat.id,
+          messageId,
           tier,
           pickDate,
+          slipContent: content,
+          legs: block.legs,
         });
       }
     } catch (err) {
-      console.error("[bot] Live pitch block failed:", err);
+      console.error("[bot] Live feed attach failed:", err);
     }
 
     await recordTrialPickView(ctx.from!.id);
-  });
-
-  bot.callbackQuery(/^live:pause:(hit|aim|go_big)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Paused" });
-    if (!ctx.from) return;
-
-    const session = pauseLiveWatch(ctx.from.id);
-    if (session) {
-      try {
-        await refreshLivePanelAfterPause(bot, session);
-      } catch {
-        // panel may already be gone
-      }
-    }
-  });
-
-  bot.callbackQuery(/^live:(hit|aim|go_big)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Updating live…" });
-    const tier = ctx.match![1] as PickTier;
-    const user = await upsertUser(ctx.from!.id, ctx.from!.username);
-
-    if (await replyIfPaywalled(ctx, user)) return;
-    if (!ctx.from || !ctx.chat) return;
-
-    const pickDate = todayPickDate();
-    try {
-      const msg = ctx.callbackQuery.message;
-      const text = msg && "text" in msg ? msg.text : undefined;
-      const isLivePanel = text?.includes("Live on the pitch") ?? false;
-
-      const result = await deliverLivePanel(bot, {
-        telegramId: ctx.from.id,
-        chatId: ctx.chat.id,
-        tier,
-        pickDate,
-        messageId: isLivePanel && msg ? msg.message_id : undefined,
-        edit: isLivePanel,
-      });
-
-      if (!result) {
-        await ctx.reply("No slip cached for today yet. Try /picks in a moment.");
-      }
-    } catch (err) {
-      console.error("[bot] Live refresh failed:", err);
-      await ctx.reply("Could not refresh live data. Try again shortly.");
-    }
   });
 
   bot.on("inline_query", async (ctx) => {
@@ -280,7 +255,7 @@ async function startBotPolling(): Promise<void> {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
     try {
-      await handleFreeformMessage(ctx, text);
+      await handleFreeformMessage(ctx, text, bot);
     } catch (err) {
       console.error("[bot] freeform message failed:", err);
       await ctx.reply("Something went wrong. Try /start or say start.");

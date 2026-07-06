@@ -9,12 +9,13 @@ export const BIGGY_HELP = `${BIGGY_GREETING}
 
 /start or start. Your trial and today's menu.
 /picks or picks. Hit, Aim, and Go Big.
+/stoplive or stop live feed. Pause live score updates.
 /status or status. Trial or subscription.
 /help. This message.`;
 
 export const BIGGY_UNKNOWN = `${BIGGY_GREETING}
 
-Say start, picks, or status.`;
+Say start, picks, stop live feed, or status.`;
 
 export const BIGGY_GREETING_HINT = `${BIGGY_GREETING}
 

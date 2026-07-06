@@ -50,17 +50,9 @@ export function paymentWebKeyboard(checkoutUrl: string): InlineKeyboard {
   return new InlineKeyboard().url("💳 Pay with USDC", checkoutUrl);
 }
 
-/** Share + live pitch refresh for an open slip. */
-export function slipActionKeyboard(tier: PickTier, autoWatch = false): InlineKeyboard {
-  const kb = new InlineKeyboard()
-    .switchInline("📲 Share this Slip with Friends", tier)
-    .text("⚡ Refresh live", `live:${tier}`);
-
-  if (autoWatch) {
-    kb.row().text("🔕 Pause live updates", `live:pause:${tier}`);
-  }
-
-  return kb;
+/** Share slip with friends — live feed is automatic on the slip message. */
+export function slipActionKeyboard(tier: PickTier): InlineKeyboard {
+  return new InlineKeyboard().switchInline("📲 Share this Slip with Friends", tier);
 }
 
 /** @deprecated use slipActionKeyboard */

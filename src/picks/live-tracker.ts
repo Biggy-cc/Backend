@@ -162,41 +162,67 @@ export type LivePanelOptions = {
   fresh?: boolean;
 };
 
+/** Marks where the auto-updating live block starts on a slip message. */
+export const LIVE_SECTION_DIVIDER = "\n\n━━━━━━━━━━━━━━━━\n";
+
+export type LiveSectionOptions = {
+  autoWatch?: boolean;
+  paused?: boolean;
+};
+
+/** Compact live lines — scores and status only (no duplicate picks/thesis). */
+export function buildCompactLiveSection(
+  legs: LegLiveState[],
+  tier: PickTier,
+  options: LiveSectionOptions = {}
+): string {
+  if (legs.length === 0) return "";
+
+  const tierLabel = formatTierLabel(tier);
+  const header = options.paused
+    ? `<b>⚡ Live</b> · ${tierLabel} · <i>updates stopped</i>`
+    : `<b>⚡ Live</b> · ${tierLabel} · <i>auto-updating</i>`;
+
+  const lines = legs.map((state, i) => {
+    const scorePart = state.scoreLine ? ` · ${state.scoreLine}` : "";
+    const status = state.progress
+      ? `${progressEmoji(state.progress.state)} ${escapeHtml(state.progress.message)}`
+      : state.phase === "live"
+        ? "⚽ In play"
+        : state.phase === "ft"
+          ? "FT"
+          : "⏳ Pre-match";
+    return `${i + 1}. ${escapeHtml(state.matchLabel)} · ${escapeHtml(state.clock)}${scorePart}\n   ${status}`;
+  });
+
+  return `${LIVE_SECTION_DIVIDER}${header}\n\n${lines.join("\n\n")}`;
+}
+
+export function appendLiveSection(
+  slipHtml: string,
+  legs: LegLiveState[],
+  tier: PickTier,
+  options: LiveSectionOptions = {}
+): string {
+  const section = buildCompactLiveSection(legs, tier, options);
+  if (!section) return slipHtml;
+  return `${stripLiveSection(slipHtml)}${section}`;
+}
+
+export function stripLiveSection(html: string): string {
+  const idx = html.indexOf(LIVE_SECTION_DIVIDER);
+  if (idx < 0) return html;
+  return html.slice(0, idx);
+}
+
+/** @deprecated Separate live panel — use appendLiveSection on the slip message instead. */
 export function buildLivePitchPanelHtml(
   legs: LegLiveState[],
   options: LivePanelOptions = {}
 ): string {
-  const source = isHighlightlyConfigured() ? "Highlightly" : "cached results";
-  const tierLabel = options.tier ? formatTierLabel(options.tier) : "your";
-
-  const footer = options.autoWatch
-    ? `<i>Watching ${tierLabel} slip · auto-updates while matches are live</i>`
-    : `<i>Tap ⚡ Refresh live for the latest from the pitch</i>`;
-
-  const lines = legs.map((state, i) => {
-    const scorePart = state.scoreLine ? ` · ${state.scoreLine}` : "";
-    const header = `${i + 1}. ${escapeHtml(state.matchLabel)} · ${escapeHtml(state.clock)}${scorePart}`;
-
-    let body = `   → ${escapeHtml(state.leg.selection)}`;
-    if (state.progress) {
-      body += `\n   ${progressEmoji(state.progress.state)} ${escapeHtml(state.progress.message)}`;
-    } else if (state.phase === "live") {
-      body += `\n   ⚽ In play — tracking via ${source}`;
-    } else if (state.phase === "pre") {
-      body += "\n   ⏳ Pre-match — lean holds until kickoff";
-    }
-
-    if (state.thesis?.summary) {
-      body += `\n   💡 ${escapeHtml(state.thesis.summary.slice(0, 120))}${state.thesis.summary.length > 120 ? "…" : ""}`;
-    }
-
-    return `${header}\n${body}`;
-  });
-
-  return `<b>⚡ Live on the pitch</b>
-${footer}
-
-${lines.join("\n\n")}`;
+  return buildCompactLiveSection(legs, options.tier ?? "hit", {
+    autoWatch: options.autoWatch,
+  }).replace(LIVE_SECTION_DIVIDER, "");
 }
 
 function kickoffMinutesFromClock(clock: string): number | null {
