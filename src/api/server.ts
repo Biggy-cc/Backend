@@ -178,8 +178,8 @@ export function startApiServer(port: number) {
     res.end();
   });
 
-  server.listen(port, () => {
-    console.log(`API listening on http://localhost:${port}`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`API listening on 0.0.0.0:${port}`);
   });
 
   return server;

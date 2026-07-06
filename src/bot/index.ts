@@ -38,7 +38,6 @@ import {
 } from "../picks/types.js";
 import type { PickTier } from "../picks/types.js";
 import { createPaymentLink } from "../payments/usdc.js";
-import { runMigrations } from "../db/client.js";
 import { runDailyDrop } from "../jobs/daily-drop.js";
 
 let botInstance: Bot | null = null;
@@ -47,14 +46,21 @@ export function getBot(): Bot | null {
   return botInstance;
 }
 
-export async function startBot() {
+export async function startBot(): Promise<void> {
+  try {
+    await startBotPolling();
+  } catch (err) {
+    console.error("[bot] Failed to start — API still running:", err);
+  }
+}
+
+async function startBotPolling(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     console.warn("TELEGRAM_BOT_TOKEN missing — bot not started.");
     return;
   }
 
-  await runMigrations();
   const bot = new Bot(token);
   botInstance = bot;
 
@@ -296,26 +302,33 @@ export async function startBot() {
   startPaymentPoller();
   startLiveWatchPoller(bot);
 
-  const maxAttempts = 6;
+  try {
+    await bot.api.deleteWebhook({ drop_pending_updates: true });
+  } catch (err) {
+    console.warn("[bot] deleteWebhook failed:", err);
+  }
+
+  const maxAttempts = 12;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await bot.start();
-      return bot;
+      return;
     } catch (err) {
-      const conflict =
-        err instanceof GrammyError && err.error_code === 409;
-      if (conflict && attempt < maxAttempts) {
+      const conflict = err instanceof GrammyError && err.error_code === 409;
+      if (conflict) {
+        const waitSec = Math.min(5 * attempt, 30);
         console.warn(
-          `[bot] 409 conflict (another instance polling) — retry ${attempt}/${maxAttempts} in 5s…`
+          `[bot] 409 conflict (another instance polling) — retry ${attempt}/${maxAttempts} in ${waitSec}s…`
         );
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, waitSec * 1000));
         continue;
       }
-      throw err;
+      console.error("[bot] Polling stopped:", err);
+      return;
     }
   }
 
-  return bot;
+  console.error("[bot] Could not acquire Telegram polling after retries");
 }
 
 export { runDailyDrop };
