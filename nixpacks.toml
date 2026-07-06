@@ -3,7 +3,7 @@
 nixPkgs = ["nodejs", "python3", "gcc", "gnumake"]
 
 [phases.install]
-cmds = ["npm ci"]
+cmds = ["npm ci --include=dev"]
 
 [phases.build]
 cmds = ["npm run build"]
