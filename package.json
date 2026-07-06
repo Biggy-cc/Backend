@@ -36,7 +36,8 @@
     "grammy": "^1.35.4",
     "node-cron": "^3.0.3",
     "rss-parser": "^3.13.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "typescript": "^5.8.2"
   },
   "optionalDependencies": {
     "fastestsmallesttextencoderdecoder": "1.0.22",
@@ -46,7 +47,6 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.10",
     "@types/node-cron": "^3.0.11",
-    "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "tsx": "^4.19.3"
   }
 }
