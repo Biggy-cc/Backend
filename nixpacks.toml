@@ -1,3 +1,7 @@
+[phases.setup]
+# better-sqlite3 needs node-gyp build tools when prebuilt binaries are unavailable
+nixPkgs = ["python3", "gcc", "gnumake"]
+
 [phases.install]
 cmds = ["npm ci"]
 
@@ -10,3 +14,5 @@ cmd = "node dist/index.js"
 [variables]
 # Railway injects NPM_CONFIG_PRODUCTION=true (deprecated). Unset so npm uses --omit=dev instead.
 NPM_CONFIG_PRODUCTION = ""
+# Node 24 has no better-sqlite3 prebuilds; pin LTS so install uses prebuilt binaries
+NIXPACKS_NODE_VERSION = "20"
