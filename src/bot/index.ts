@@ -295,7 +295,25 @@ export async function startBot() {
   const { startPaymentPoller } = await import("../payments/poller.js");
   startPaymentPoller();
   startLiveWatchPoller(bot);
-  await bot.start();
+
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await bot.start();
+      return bot;
+    } catch (err) {
+      const conflict =
+        err instanceof GrammyError && err.error_code === 409;
+      if (conflict && attempt < maxAttempts) {
+        console.warn(
+          `[bot] 409 conflict (another instance polling) — retry ${attempt}/${maxAttempts} in 5s…`
+        );
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      throw err;
+    }
+  }
 
   return bot;
 }

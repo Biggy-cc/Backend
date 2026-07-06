@@ -22,7 +22,12 @@ async function main() {
     startApiServer(apiPort);
   }
 
-  await startBot();
+  try {
+    await startBot();
+  } catch (err) {
+    // Keep API up if Telegram polling fails (409 duplicate instance, token issues, etc.)
+    console.error("[bot] Failed to start — API will keep running:", err);
+  }
 }
 
 main().catch((err) => {
