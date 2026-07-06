@@ -27,14 +27,20 @@ export function startScheduler() {
   });
 
   cron.schedule(winCheckSchedule, async () => {
+    const bot = getBot();
+    if (!bot) {
+      console.warn("[social] Bot not ready — skipping win check");
+      return;
+    }
     try {
-      await postNewWins();
+      await postNewWins(bot);
     } catch (err) {
       console.error("[social] Win check failed:", err);
     }
   });
 
+  const socialMode = process.env.SOCIAL_MODE?.trim().toLowerCase() === "auto" ? "auto/X" : "manual/Telegram";
   console.log(
-    `Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC, X wins ${winCheckSchedule} UTC`
+    `Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC, social wins ${winCheckSchedule} UTC (${socialMode})`
   );
 }

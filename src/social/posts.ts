@@ -1,3 +1,4 @@
+import type { Bot } from "grammy";
 import {
   gradeLegWithScore,
   matchScore,
@@ -16,6 +17,7 @@ import { todayPickDate } from "../picks/generate.js";
 import type { PickTier } from "../picks/types.js";
 import type { DailyPicksBundle } from "../picks/validate.js";
 import { formatDailyFreePick, formatLegWin, formatPickUpdate } from "./copy.js";
+import { isSocialAutoMode, sendManualSocialDraft } from "./notify.js";
 import { recordPost, wasPosted, type SocialPostKind } from "./store.js";
 import { isXConfigured, postTweet } from "./x-client.js";
 
@@ -43,25 +45,40 @@ export function selectDailyFreeLeg(picks: DailyPicksBundle["picks"]): PickLeg | 
   return legs.reduce((best, leg) => (leg.odds < best.odds ? leg : best));
 }
 
-async function publish(
+async function dispatchPost(
+  bot: Bot | null,
   kind: SocialPostKind,
   dedupKey: string,
   text: string
 ): Promise<boolean> {
-  if (!isXConfigured()) return false;
   if (await wasPosted(dedupKey)) {
-    console.log("[social] Already posted:", dedupKey);
+    console.log("[social] Already sent:", dedupKey);
     return false;
   }
 
-  const tweetId = await postTweet(text);
-  if (!tweetId) return false;
+  if (isSocialAutoMode() && isXConfigured()) {
+    const tweetId = await postTweet(text);
+    if (!tweetId) return false;
+    await recordPost(kind, dedupKey, text, tweetId);
+    return true;
+  }
 
-  await recordPost(kind, dedupKey, text, tweetId);
+  if (!bot) {
+    console.warn("[social] Manual mode — bot not ready, skipping draft");
+    return false;
+  }
+
+  const sent = await sendManualSocialDraft(bot, kind, text);
+  if (!sent) return false;
+
+  await recordPost(kind, dedupKey, text, null);
   return true;
 }
 
-export async function postDailyFreePick(pickDate: string): Promise<boolean> {
+export async function postDailyFreePick(
+  pickDate: string,
+  bot: Bot | null = null
+): Promise<boolean> {
   const batch = await loadStoredBatch(pickDate);
   if (!batch) return false;
 
@@ -69,16 +86,17 @@ export async function postDailyFreePick(pickDate: string): Promise<boolean> {
   if (!leg) return false;
 
   const key = legDedupKey("daily_free", pickDate, leg);
-  return publish("daily_free", key, formatDailyFreePick(leg));
+  return dispatchPost(bot, "daily_free", key, formatDailyFreePick(leg));
 }
 
 export async function postPickUpdate(
   pickDate: string,
   version: number,
-  changeNote: string
+  changeNote: string,
+  bot: Bot | null = null
 ): Promise<boolean> {
   const key = `pick_update:${pickDate}:v${version}`;
-  return publish("pick_update", key, formatPickUpdate(version, changeNote));
+  return dispatchPost(bot, "pick_update", key, formatPickUpdate(version, changeNote));
 }
 
 type WonLeg = { pickDate: string; tier: PickTier; leg: PickLeg; scoreLine?: string };
@@ -130,19 +148,24 @@ async function findNewWonLegs(): Promise<WonLeg[]> {
   return won;
 }
 
-/** Post celebration tweets for newly settled winning legs. */
-export async function postNewWins(): Promise<number> {
-  if (!isXConfigured()) return 0;
-
+/** Notify admin or post celebration for newly settled winning legs. */
+export async function postNewWins(bot: Bot | null = null): Promise<number> {
   const wins = await findNewWonLegs();
-  let posted = 0;
+  let sent = 0;
 
   for (const { pickDate, tier, leg, scoreLine } of wins) {
     const key = legDedupKey("leg_win", pickDate, leg);
-    const ok = await publish("leg_win", key, formatLegWin(leg, tier, scoreLine));
-    if (ok) posted++;
+    const ok = await dispatchPost(
+      bot,
+      "leg_win",
+      key,
+      formatLegWin(leg, tier, scoreLine)
+    );
+    if (ok) sent++;
   }
 
-  if (posted > 0) console.log(`[social] Posted ${posted} win tweet(s)`);
-  return posted;
+  if (sent > 0) {
+    console.log(`[social] Dispatched ${sent} win post(s) (${isSocialAutoMode() ? "auto" : "manual"})`);
+  }
+  return sent;
 }

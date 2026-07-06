@@ -57,7 +57,7 @@ export async function runRefreshPicks(bot: Bot) {
     }
 
     if (result.changeNote) {
-      void postPickUpdate(pickDate, result.version, result.changeNote).catch((err) =>
+      void postPickUpdate(pickDate, result.version, result.changeNote, bot).catch((err) =>
         console.error("[social] Update post failed:", err)
       );
     }
@@ -93,7 +93,7 @@ export async function runDailyDrop(bot: Bot) {
     }
   }
 
-  void postDailyFreePick(pickDate).catch((err) =>
+  void postDailyFreePick(pickDate, bot).catch((err) =>
     console.error("[social] Daily free pick post failed:", err)
   );
 }
