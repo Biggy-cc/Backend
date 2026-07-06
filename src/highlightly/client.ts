@@ -65,7 +65,8 @@ function cacheTtlForDate(date: string): number {
 
 async function fetchMatchesRaw(
   date: string,
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  options: { fresh?: boolean } = {}
 ): Promise<HighlightlyMatch[]> {
   const apiKey = getApiKey();
   if (!apiKey) return [];
@@ -73,7 +74,7 @@ async function fetchMatchesRaw(
   const key = cacheKey(date, params);
   const cached = matchCache.get(key);
   const ttl = cacheTtlForDate(date);
-  if (cached && Date.now() - cached.fetchedAt < ttl) {
+  if (!options.fresh && cached && Date.now() - cached.fetchedAt < ttl) {
     return cached.matches;
   }
 
@@ -158,13 +159,16 @@ export function findHighlightlyMatch(
 /** One WC list call + optional team lookups for unmatched legs (cached). */
 export async function loadHighlightlyMatchesForLegs(
   pickDate: string,
-  matchLabels: string[]
+  matchLabels: string[],
+  options: { fresh?: boolean } = {}
 ): Promise<Map<string, HighlightlyMatch>> {
   const out = new Map<string, HighlightlyMatch>();
   if (!getApiKey() || matchLabels.length === 0) return out;
 
+  const fetchOpts = { fresh: options.fresh };
   const pool: HighlightlyMatch[] = [
-    ...(await fetchMatchesRaw(pickDate, { leagueName: "World Cup" })),
+    ...(await fetchMatchesRaw(pickDate, { leagueName: "World Cup" }, fetchOpts)),
+    ...(await fetchMatchesRaw(pickDate, { leagueName: "Friendlies" }, fetchOpts)),
   ];
 
   for (const label of matchLabels) {
@@ -185,7 +189,7 @@ export async function loadHighlightlyMatchesForLegs(
       if (searchedTeams.has(norm)) continue;
       searchedTeams.add(norm);
 
-      const extra = await fetchMatchesRaw(pickDate, { homeTeamName: team });
+      const extra = await fetchMatchesRaw(pickDate, { homeTeamName: team }, fetchOpts);
       pool.push(...extra);
 
       for (const leg of unmatched) {

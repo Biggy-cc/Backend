@@ -94,7 +94,8 @@ function legStateFromSettled(
 
 export async function buildLegLiveStates(
   pickDate: string,
-  tier: PickTier
+  tier: PickTier,
+  options: { fresh?: boolean } = {}
 ): Promise<LegLiveState[]> {
   const batch = await loadStoredBatch(pickDate);
   if (!batch) return [];
@@ -108,7 +109,7 @@ export async function buildLegLiveStates(
 
   const matchLabels = slip.legs.map((l) => l.match);
   const hlByLeg = isHighlightlyConfigured()
-    ? await loadHighlightlyMatchesForLegs(pickDate, matchLabels)
+    ? await loadHighlightlyMatchesForLegs(pickDate, matchLabels, { fresh: options.fresh })
     : new Map<string, HighlightlyMatch>();
 
   const states: LegLiveState[] = [];
@@ -157,6 +158,8 @@ export function legStateFingerprint(state: LegLiveState): string {
 export type LivePanelOptions = {
   autoWatch?: boolean;
   tier?: PickTier;
+  /** Bypass Highlightly cache — used by the 60s live poller. */
+  fresh?: boolean;
 };
 
 export function buildLivePitchPanelHtml(
@@ -221,7 +224,7 @@ export async function buildLivePitchBlock(
   tier: PickTier,
   options: LivePanelOptions = {}
 ): Promise<LivePitchBlock | null> {
-  const legs = await buildLegLiveStates(pickDate, tier);
+  const legs = await buildLegLiveStates(pickDate, tier, { fresh: options.fresh });
   if (legs.length === 0) return null;
 
   const autoWatch = options.autoWatch ?? shouldAutoWatchFromLegs(legs);

@@ -134,18 +134,20 @@ async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
     return;
   }
 
-  if (!session.autoWatch) return;
-
   const block = await buildLivePitchBlock(session.pickDate, session.tier, {
-    autoWatch: true,
     tier: session.tier,
+    fresh: true,
   });
   if (!block) {
     sessions.delete(session.telegramId);
     return;
   }
 
-  const { legs, html } = block;
+  const { legs } = block;
+  session.autoWatch = shouldAutoWatchLegs(legs);
+  if (!session.autoWatch) return;
+
+  const html = buildLivePitchPanelHtml(legs, { autoWatch: true, tier: session.tier });
 
   if (changedOrAlertsNeeded(session, legs)) {
     if (panelChanged(session.legFingerprints, legs)) {
@@ -223,7 +225,10 @@ export async function deliverLivePanel(
     edit?: boolean;
   }
 ): Promise<{ messageId: number; autoWatch: boolean } | null> {
-  const block = await buildLivePitchBlock(input.pickDate, input.tier, { tier: input.tier });
+  const block = await buildLivePitchBlock(input.pickDate, input.tier, {
+    tier: input.tier,
+    fresh: Boolean(input.edit),
+  });
   if (!block) return null;
 
   const autoWatch = shouldAutoWatchLegs(block.legs);
