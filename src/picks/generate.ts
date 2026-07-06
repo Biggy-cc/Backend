@@ -66,6 +66,14 @@ export type GenerateResult = {
 let generationInFlight: Promise<GenerateResult> | null = null;
 let generationKey: string | null = null;
 
+export function isPickGenerationInFlight(): boolean {
+  return generationInFlight != null;
+}
+
+export function pickGenerationDate(): string | null {
+  return generationKey;
+}
+
 async function loadMatchBundles(): Promise<MatchBundle[]> {
   const all = await fetchFixturesSnapshot();
   const upcoming = selectPicksFixtures(all);

@@ -27,6 +27,7 @@ import {
 import {
   generateDailyPicks,
   getCachedPick,
+  isPickGenerationInFlight,
   todayPickDate,
 } from "../picks/generate.js";
 import {
@@ -102,7 +103,12 @@ export async function startBot() {
     }
 
     if (!content) {
-      await ctx.reply("No football card cached yet. Building today's picks (about a minute).");
+      const building = isPickGenerationInFlight();
+      await ctx.reply(
+        building
+          ? "Today's card is almost ready — hang tight (about a minute)."
+          : "No football card cached yet. Building today's picks (about a minute)."
+      );
       try {
         await generateDailyPicks(pickDate);
         content = await getCachedPick(pickDate, tier);
