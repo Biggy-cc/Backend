@@ -1,10 +1,12 @@
 import cron from "node-cron";
 import { getBot } from "../bot/index.js";
 import { runDailyDrop, runRefreshPicks } from "./daily-drop.js";
+import { postNewWins } from "../social/posts.js";
 
 export function startScheduler() {
   const dailySchedule = process.env.DAILY_CRON ?? "0 8 * * *";
   const refreshSchedule = process.env.PICKS_REFRESH_CRON ?? "0 12,18 * * *";
+  const winCheckSchedule = process.env.SOCIAL_WIN_CRON ?? "*/30 14-23 * * *";
 
   cron.schedule(dailySchedule, async () => {
     const bot = getBot();
@@ -24,5 +26,15 @@ export function startScheduler() {
     await runRefreshPicks(bot);
   });
 
-  console.log(`Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC`);
+  cron.schedule(winCheckSchedule, async () => {
+    try {
+      await postNewWins();
+    } catch (err) {
+      console.error("[social] Win check failed:", err);
+    }
+  });
+
+  console.log(
+    `Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC, X wins ${winCheckSchedule} UTC`
+  );
 }

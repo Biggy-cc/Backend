@@ -4,6 +4,7 @@ import { picksStaleDueToKickoff } from "../picks/kickoff.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { listActiveUserIds } from "../db/users.js";
+import { postDailyFreePick, postPickUpdate, postNewWins } from "../social/posts.js";
 
 export async function runRefreshPicks(bot: Bot) {
   const pickDate = todayPickDate();
@@ -54,6 +55,12 @@ export async function runRefreshPicks(bot: Bot) {
         console.warn(`[refresh] Could not notify ${telegramId}:`, err);
       }
     }
+
+    if (result.changeNote) {
+      void postPickUpdate(pickDate, result.version, result.changeNote).catch((err) =>
+        console.error("[social] Update post failed:", err)
+      );
+    }
   } catch (err) {
     console.error("[refresh] Failed:", err);
   }
@@ -85,4 +92,8 @@ export async function runDailyDrop(bot: Bot) {
       console.warn(`[cron] Could not message ${telegramId}:`, err);
     }
   }
+
+  void postDailyFreePick(pickDate).catch((err) =>
+    console.error("[social] Daily free pick post failed:", err)
+  );
 }

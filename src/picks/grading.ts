@@ -189,7 +189,7 @@ export function gradeLegAtFullTime(leg: PickLeg): boolean | null {
   return gradeLegWithScore(leg, score);
 }
 
-function gradeLegForRecord(
+export function gradeLegForRecord(
   leg: PickLeg,
   pickDate: string,
   hlByDate: Map<string, Map<string, HighlightlyMatch>>,

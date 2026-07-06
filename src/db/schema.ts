@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS daily_pick_batches (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (pick_date, version)
 );
+
+CREATE TABLE IF NOT EXISTS social_posts (
+  kind TEXT NOT NULL,
+  dedup_key TEXT PRIMARY KEY,
+  body TEXT NOT NULL,
+  tweet_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 /** Legacy SQLite upgrades for databases created before versioning columns. */
