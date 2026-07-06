@@ -70,6 +70,12 @@ export function startApiServer(port: number) {
       return;
     }
 
+    // Railway / load-balancer probes sometimes hit /
+    if (req.method === "GET" && (url === "/" || url === "/health")) {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.method === "GET" && url === "/api/telegram-bot") {
       try {
         const bot = await getTelegramBotInfo();
