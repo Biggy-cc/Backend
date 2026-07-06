@@ -17,7 +17,7 @@ async function main() {
     .then(() => console.log("[picks] Startup warm-up done"))
     .catch((err) => console.error("[picks] Startup warm-up failed:", err));
 
-  const apiPort = Number(process.env.FIXTURES_API_PORT ?? 8787);
+  const apiPort = Number(process.env.PORT ?? process.env.FIXTURES_API_PORT ?? 8787);
   if (Number.isFinite(apiPort) && apiPort > 0) {
     startApiServer(apiPort);
   }
