@@ -23,8 +23,8 @@ import {
 } from "../picks/live-tracker.js";
 import {
   clearLiveFeedForUser,
+  registerPendingLiveWatch,
   resumeLiveFeed,
-  startLiveFeed,
   startLiveWatchPoller,
   stopLiveFeed,
 } from "../picks/live-watch.js";
@@ -148,7 +148,7 @@ async function startBotPolling(): Promise<void> {
       if (ctx.from && ctx.chat) {
         const block = await buildLivePitchBlock(pickDate, tier, { tier });
         if (block?.legs.length) {
-          await startLiveFeed(bot, {
+          registerPendingLiveWatch({
             telegramId: ctx.from.id,
             chatId: ctx.chat.id,
             tier,
@@ -158,7 +158,7 @@ async function startBotPolling(): Promise<void> {
         }
       }
     } catch (err) {
-      console.error("[bot] Live feed failed:", err);
+      console.error("[bot] Live feed watch failed:", err);
     }
 
     await recordTrialPickView(ctx.from!.id);

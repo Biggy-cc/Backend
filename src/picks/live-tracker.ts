@@ -167,6 +167,10 @@ export type LivePanelOptions = {
   fresh?: boolean;
 };
 
+export function hasReportableLiveData(legs: LegLiveState[]): boolean {
+  return legs.some((l) => l.phase === "live" || l.phase === "ft" || l.progress !== null);
+}
+
 /** Standalone live feed message — scores and status only. */
 export function buildLiveFeedHtml(
   legs: LegLiveState[],

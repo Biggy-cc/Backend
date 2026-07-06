@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import {
   buildLiveFeedHtml,
   buildLivePitchBlock,
+  hasReportableLiveData,
   legStateFingerprint,
   type LegLiveState,
 } from "./live-tracker.js";
@@ -14,7 +15,7 @@ const SESSION_MAX_MS = 3 * 60 * 60_000;
 export type LiveWatchSession = {
   telegramId: number;
   chatId: number;
-  liveMessageId: number;
+  liveMessageId: number | null;
   tier: PickTier;
   pickDate: string;
   legFingerprints: string[];
@@ -55,10 +56,10 @@ export function pauseLiveWatch(telegramId: number): LiveWatchSession | undefined
   return session;
 }
 
-export function registerLiveWatch(input: {
+function registerLiveWatch(input: {
   telegramId: number;
   chatId: number;
-  liveMessageId: number;
+  liveMessageId: number | null;
   tier: PickTier;
   pickDate: string;
   legs: LegLiveState[];
@@ -115,6 +116,8 @@ async function pushContextualAlerts(
   session: LiveWatchSession,
   legs: LegLiveState[]
 ): Promise<void> {
+  if (!session.liveMessageId) return;
+
   for (let i = 0; i < legs.length; i++) {
     const state = legs[i]!;
     if (state.progress?.state !== "won") continue;
@@ -152,6 +155,41 @@ function changedOrAlertsNeeded(session: LiveWatchSession, legs: LegLiveState[]):
   return !session.slipWonNotified && allLegsWon(legs);
 }
 
+async function publishLiveFeed(
+  bot: Bot,
+  session: LiveWatchSession,
+  legs: LegLiveState[]
+): Promise<void> {
+  const html = buildLiveFeedHtml(legs, session.tier);
+  if (!html) return;
+
+  if (session.liveMessageId == null) {
+    const sent = await bot.api.sendMessage(session.chatId, html, {
+      parse_mode: PICK_PARSE_MODE,
+    });
+    session.liveMessageId = sent.message_id;
+    session.legFingerprints = legs.map(legStateFingerprint);
+    return;
+  }
+
+  if (!panelChanged(session.legFingerprints, legs)) return;
+
+  try {
+    await bot.api.editMessageText(session.chatId, session.liveMessageId, html, {
+      parse_mode: PICK_PARSE_MODE,
+    });
+    session.legFingerprints = legs.map(legStateFingerprint);
+  } catch (err: unknown) {
+    const desc = (err as { description?: string }).description ?? String(err);
+    if (desc.includes("message is not modified")) return;
+    if (desc.includes("message to edit not found") || desc.includes("bot was blocked")) {
+      sessions.delete(session.telegramId);
+      return;
+    }
+    console.error("[live-watch] edit failed:", desc);
+  }
+}
+
 async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
   if (Date.now() - session.startedAt > SESSION_MAX_MS) {
     sessions.delete(session.telegramId);
@@ -169,30 +207,10 @@ async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
 
   const { legs } = block;
 
-  if (changedOrAlertsNeeded(session, legs)) {
-    if (panelChanged(session.legFingerprints, legs)) {
-      const html = buildLiveFeedHtml(legs, session.tier);
-      try {
-        await bot.api.editMessageText(session.chatId, session.liveMessageId, html, {
-          parse_mode: PICK_PARSE_MODE,
-        });
-        session.legFingerprints = legs.map(legStateFingerprint);
-      } catch (err: unknown) {
-        const desc = (err as { description?: string }).description ?? String(err);
-        if (desc.includes("message is not modified")) {
-          // still check alerts below
-        } else if (
-          desc.includes("message to edit not found") ||
-          desc.includes("bot was blocked")
-        ) {
-          sessions.delete(session.telegramId);
-          return;
-        } else {
-          console.error("[live-watch] edit failed:", desc);
-        }
-      }
-    }
+  if (!hasReportableLiveData(legs)) return;
 
+  if (changedOrAlertsNeeded(session, legs)) {
+    await publishLiveFeed(bot, session, legs);
     await pushContextualAlerts(bot, session, legs);
   }
 
@@ -221,37 +239,25 @@ export function startLiveWatchPoller(bot: Bot): void {
   console.log("[live-watch] Auto live feed poller started (60s)");
 }
 
-/** Send a separate live feed message and start auto-updates. */
-export async function startLiveFeed(
-  bot: Bot,
-  input: {
-    telegramId: number;
-    chatId: number;
-    tier: PickTier;
-    pickDate: string;
-    legs: LegLiveState[];
-  }
-): Promise<number | null> {
-  const html = buildLiveFeedHtml(input.legs, input.tier);
-  if (!html) return null;
-
-  const sent = await bot.api.sendMessage(input.chatId, html, {
-    parse_mode: PICK_PARSE_MODE,
-  });
-
+/** Watch a slip silently — live messages go out only when matches have real data. */
+export function registerPendingLiveWatch(input: {
+  telegramId: number;
+  chatId: number;
+  tier: PickTier;
+  pickDate: string;
+  legs: LegLiveState[];
+}): void {
   registerLiveWatch({
     telegramId: input.telegramId,
     chatId: input.chatId,
-    liveMessageId: sent.message_id,
+    liveMessageId: null,
     tier: input.tier,
     pickDate: input.pickDate,
     legs: input.legs,
   });
-
-  return sent.message_id;
 }
 
-/** Stop auto-updates and remove the live feed message. */
+/** Stop auto-updates and remove any live feed message. */
 export async function stopLiveFeed(bot: Bot, telegramId: number): Promise<boolean> {
   const session = pauseLiveWatch(telegramId);
   if (!session) return false;
@@ -262,13 +268,15 @@ export async function stopLiveFeed(bot: Bot, telegramId: number): Promise<boolea
     pickDate: session.pickDate,
   });
 
-  await deleteLiveMessage(bot, session.chatId, session.liveMessageId);
+  if (session.liveMessageId != null) {
+    await deleteLiveMessage(bot, session.chatId, session.liveMessageId);
+  }
   return true;
 }
 
 export type ResumeLiveFeedResult = "resumed" | "already_active" | "nothing_paused" | "no_legs";
 
-/** Resume auto-updates with a fresh live feed message. */
+/** Resume watching — still waits for real match data before sending. */
 export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<ResumeLiveFeedResult> {
   if (sessions.has(telegramId)) return "already_active";
 
@@ -289,7 +297,7 @@ export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<Resu
     return "no_legs";
   }
 
-  const messageId = await startLiveFeed(bot, {
+  registerPendingLiveWatch({
     telegramId,
     chatId: paused.chatId,
     tier: paused.tier,
@@ -297,16 +305,23 @@ export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<Resu
     legs: block.legs,
   });
 
-  if (!messageId) return "nothing_paused";
-
   pausedFeeds.delete(telegramId);
+
+  if (hasReportableLiveData(block.legs)) {
+    const session = sessions.get(telegramId);
+    if (session) {
+      await publishLiveFeed(bot, session, block.legs);
+      await pushContextualAlerts(bot, session, block.legs);
+    }
+  }
+
   return "resumed";
 }
 
 /** Tear down any active live feed when the user opens a new slip. */
 export async function clearLiveFeedForUser(bot: Bot, telegramId: number): Promise<void> {
   const session = pauseLiveWatch(telegramId);
-  if (session) {
+  if (session?.liveMessageId != null) {
     await deleteLiveMessage(bot, session.chatId, session.liveMessageId);
   }
   clearPausedLiveFeed(telegramId);
