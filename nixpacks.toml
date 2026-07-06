@@ -1,6 +1,6 @@
 [phases.setup]
-# better-sqlite3 needs node-gyp build tools when prebuilt binaries are unavailable
-nixPkgs = ["python3", "gcc", "gnumake"]
+# nixPkgs replaces Nixpacks defaults — include nodejs or npm won't exist
+nixPkgs = ["nodejs", "python3", "gcc", "gnumake"]
 
 [phases.install]
 cmds = ["npm ci"]
