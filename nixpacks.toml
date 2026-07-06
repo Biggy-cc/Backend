@@ -1,2 +1,12 @@
+[phases.install]
+cmds = ["npm ci"]
+
 [phases.build]
 cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/index.js"
+
+[variables]
+# Railway injects NPM_CONFIG_PRODUCTION=true (deprecated). Unset so npm uses --omit=dev instead.
+NPM_CONFIG_PRODUCTION = ""
