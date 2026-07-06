@@ -19,14 +19,12 @@ import {
 } from "../db/users.js";
 import { isPickContentStale, picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import {
-  appendLiveSection,
   buildLivePitchBlock,
 } from "../picks/live-tracker.js";
 import {
-  clearPausedLiveFeed,
-  pauseLiveWatch,
-  registerSlipLiveFeed,
+  clearLiveFeedForUser,
   resumeLiveFeed,
+  startLiveFeed,
   startLiveWatchPoller,
   stopLiveFeed,
 } from "../picks/live-watch.js";
@@ -142,31 +140,25 @@ async function startBotPolling(): Promise<void> {
       return;
     }
 
-    pauseLiveWatch(ctx.from!.id);
-    clearPausedLiveFeed(ctx.from!.id);
+    await clearLiveFeedForUser(bot, ctx.from!.id);
 
-    const block = await buildLivePitchBlock(pickDate, tier, { tier });
-    const slipBody =
-      block?.legs.length
-        ? appendLiveSection(content, block.legs, tier, { autoWatch: true })
-        : content;
-
-    const messageId = await replyWithPickSlip(ctx, tier, slipBody, slipActionKeyboard(tier));
+    await replyWithPickSlip(ctx, tier, content, slipActionKeyboard(tier));
 
     try {
-      if (ctx.from && ctx.chat && messageId && block?.legs.length) {
-        registerSlipLiveFeed({
-          telegramId: ctx.from.id,
-          chatId: ctx.chat.id,
-          messageId,
-          tier,
-          pickDate,
-          slipContent: content,
-          legs: block.legs,
-        });
+      if (ctx.from && ctx.chat) {
+        const block = await buildLivePitchBlock(pickDate, tier, { tier });
+        if (block?.legs.length) {
+          await startLiveFeed(bot, {
+            telegramId: ctx.from.id,
+            chatId: ctx.chat.id,
+            tier,
+            pickDate,
+            legs: block.legs,
+          });
+        }
       }
     } catch (err) {
-      console.error("[bot] Live feed attach failed:", err);
+      console.error("[bot] Live feed failed:", err);
     }
 
     await recordTrialPickView(ctx.from!.id);

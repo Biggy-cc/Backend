@@ -1,12 +1,10 @@
 import type { Bot } from "grammy";
 import {
-  appendLiveSection,
+  buildLiveFeedHtml,
   buildLivePitchBlock,
   legStateFingerprint,
-  stripLiveSection,
   type LegLiveState,
 } from "./live-tracker.js";
-import { slipActionKeyboard } from "../bot/keyboards.js";
 import { PICK_PARSE_MODE, formatTierLabel } from "./types.js";
 import type { PickTier } from "./types.js";
 
@@ -16,10 +14,9 @@ const SESSION_MAX_MS = 3 * 60 * 60_000;
 export type LiveWatchSession = {
   telegramId: number;
   chatId: number;
-  messageId: number;
+  liveMessageId: number;
   tier: PickTier;
   pickDate: string;
-  slipContent: string;
   legFingerprints: string[];
   legsWonNotified: number[];
   slipWonNotified: boolean;
@@ -28,10 +25,8 @@ export type LiveWatchSession = {
 
 type PausedLiveFeed = {
   chatId: number;
-  messageId: number;
   tier: PickTier;
   pickDate: string;
-  slipContent: string;
 };
 
 const sessions = new Map<number, LiveWatchSession>();
@@ -46,6 +41,14 @@ export function getLiveWatchSession(telegramId: number): LiveWatchSession | unde
   return sessions.get(telegramId);
 }
 
+async function deleteLiveMessage(bot: Bot, chatId: number, messageId: number): Promise<void> {
+  try {
+    await bot.api.deleteMessage(chatId, messageId);
+  } catch {
+    // already gone
+  }
+}
+
 export function pauseLiveWatch(telegramId: number): LiveWatchSession | undefined {
   const session = sessions.get(telegramId);
   sessions.delete(telegramId);
@@ -55,19 +58,17 @@ export function pauseLiveWatch(telegramId: number): LiveWatchSession | undefined
 export function registerLiveWatch(input: {
   telegramId: number;
   chatId: number;
-  messageId: number;
+  liveMessageId: number;
   tier: PickTier;
   pickDate: string;
-  slipContent: string;
   legs: LegLiveState[];
 }): LiveWatchSession {
   const session: LiveWatchSession = {
     telegramId: input.telegramId,
     chatId: input.chatId,
-    messageId: input.messageId,
+    liveMessageId: input.liveMessageId,
     tier: input.tier,
     pickDate: input.pickDate,
-    slipContent: input.slipContent,
     legFingerprints: input.legs.map(legStateFingerprint),
     legsWonNotified: input.legs
       .map((l, i) => (l.progress?.state === "won" ? i : -1))
@@ -122,7 +123,7 @@ async function pushContextualAlerts(
     session.legsWonNotified.push(i);
     await bot.api.sendMessage(session.chatId, formatWinAlert(session.tier, i, state, legs), {
       parse_mode: PICK_PARSE_MODE,
-      reply_to_message_id: session.messageId,
+      reply_to_message_id: session.liveMessageId,
     });
   }
 
@@ -130,7 +131,7 @@ async function pushContextualAlerts(
     session.slipWonNotified = true;
     await bot.api.sendMessage(session.chatId, formatSlipWinAlert(session.tier), {
       parse_mode: PICK_PARSE_MODE,
-      reply_to_message_id: session.messageId,
+      reply_to_message_id: session.liveMessageId,
     });
   }
 }
@@ -170,13 +171,10 @@ async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
 
   if (changedOrAlertsNeeded(session, legs)) {
     if (panelChanged(session.legFingerprints, legs)) {
-      const html = appendLiveSection(session.slipContent, legs, session.tier, {
-        autoWatch: true,
-      });
+      const html = buildLiveFeedHtml(legs, session.tier);
       try {
-        await bot.api.editMessageText(session.chatId, session.messageId, html, {
+        await bot.api.editMessageText(session.chatId, session.liveMessageId, html, {
           parse_mode: PICK_PARSE_MODE,
-          reply_markup: slipActionKeyboard(session.tier),
         });
         session.legFingerprints = legs.map(legStateFingerprint);
       } catch (err: unknown) {
@@ -223,88 +221,54 @@ export function startLiveWatchPoller(bot: Bot): void {
   console.log("[live-watch] Auto live feed poller started (60s)");
 }
 
-/** Register auto-updates on a slip message that already includes the live section. */
-export function registerSlipLiveFeed(input: {
-  telegramId: number;
-  chatId: number;
-  messageId: number;
-  tier: PickTier;
-  pickDate: string;
-  slipContent: string;
-  legs: LegLiveState[];
-}): void {
-  registerLiveWatch({
-    telegramId: input.telegramId,
-    chatId: input.chatId,
-    messageId: input.messageId,
-    tier: input.tier,
-    pickDate: input.pickDate,
-    slipContent: stripLiveSection(input.slipContent),
-    legs: input.legs,
-  });
-}
-
-/** Attach auto-updating live section to the user's tier slip message. */
-export async function startSlipLiveFeed(
+/** Send a separate live feed message and start auto-updates. */
+export async function startLiveFeed(
   bot: Bot,
   input: {
     telegramId: number;
     chatId: number;
-    messageId: number;
     tier: PickTier;
     pickDate: string;
-    slipContent: string;
     legs: LegLiveState[];
   }
-): Promise<void> {
-  const html = appendLiveSection(input.slipContent, input.legs, input.tier, {
-    autoWatch: true,
-  });
+): Promise<number | null> {
+  const html = buildLiveFeedHtml(input.legs, input.tier);
+  if (!html) return null;
 
-  await bot.api.editMessageText(input.chatId, input.messageId, html, {
+  const sent = await bot.api.sendMessage(input.chatId, html, {
     parse_mode: PICK_PARSE_MODE,
-    reply_markup: slipActionKeyboard(input.tier),
   });
 
   registerLiveWatch({
     telegramId: input.telegramId,
     chatId: input.chatId,
-    messageId: input.messageId,
+    liveMessageId: sent.message_id,
     tier: input.tier,
     pickDate: input.pickDate,
-    slipContent: stripLiveSection(input.slipContent),
     legs: input.legs,
   });
+
+  return sent.message_id;
 }
 
-/** Stop auto-updates and restore the slip without the live block. */
+/** Stop auto-updates and remove the live feed message. */
 export async function stopLiveFeed(bot: Bot, telegramId: number): Promise<boolean> {
   const session = pauseLiveWatch(telegramId);
   if (!session) return false;
 
   pausedFeeds.set(telegramId, {
     chatId: session.chatId,
-    messageId: session.messageId,
     tier: session.tier,
     pickDate: session.pickDate,
-    slipContent: session.slipContent,
   });
 
-  try {
-    await bot.api.editMessageText(session.chatId, session.messageId, session.slipContent, {
-      parse_mode: PICK_PARSE_MODE,
-      reply_markup: slipActionKeyboard(session.tier),
-    });
-  } catch {
-    pausedFeeds.delete(telegramId);
-  }
-
+  await deleteLiveMessage(bot, session.chatId, session.liveMessageId);
   return true;
 }
 
 export type ResumeLiveFeedResult = "resumed" | "already_active" | "nothing_paused" | "no_legs";
 
-/** Resume auto-updates on the last paused slip. */
+/** Resume auto-updates with a fresh live feed message. */
 export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<ResumeLiveFeedResult> {
   if (sessions.has(telegramId)) return "already_active";
 
@@ -325,19 +289,25 @@ export async function resumeLiveFeed(bot: Bot, telegramId: number): Promise<Resu
     return "no_legs";
   }
 
-  try {
-    await startSlipLiveFeed(bot, {
-      telegramId,
-      chatId: paused.chatId,
-      messageId: paused.messageId,
-      tier: paused.tier,
-      pickDate: paused.pickDate,
-      slipContent: paused.slipContent,
-      legs: block.legs,
-    });
-    pausedFeeds.delete(telegramId);
-    return "resumed";
-  } catch {
-    return "nothing_paused";
+  const messageId = await startLiveFeed(bot, {
+    telegramId,
+    chatId: paused.chatId,
+    tier: paused.tier,
+    pickDate: paused.pickDate,
+    legs: block.legs,
+  });
+
+  if (!messageId) return "nothing_paused";
+
+  pausedFeeds.delete(telegramId);
+  return "resumed";
+}
+
+/** Tear down any active live feed when the user opens a new slip. */
+export async function clearLiveFeedForUser(bot: Bot, telegramId: number): Promise<void> {
+  const session = pauseLiveWatch(telegramId);
+  if (session) {
+    await deleteLiveMessage(bot, session.chatId, session.liveMessageId);
   }
+  clearPausedLiveFeed(telegramId);
 }

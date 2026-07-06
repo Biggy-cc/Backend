@@ -155,6 +155,11 @@ export function legStateFingerprint(state: LegLiveState): string {
   ].join("|");
 }
 
+export type LiveSectionOptions = {
+  autoWatch?: boolean;
+  paused?: boolean;
+};
+
 export type LivePanelOptions = {
   autoWatch?: boolean;
   tier?: PickTier;
@@ -162,16 +167,8 @@ export type LivePanelOptions = {
   fresh?: boolean;
 };
 
-/** Marks where the auto-updating live block starts on a slip message. */
-export const LIVE_SECTION_DIVIDER = "\n\n━━━━━━━━━━━━━━━━\n";
-
-export type LiveSectionOptions = {
-  autoWatch?: boolean;
-  paused?: boolean;
-};
-
-/** Compact live lines — scores and status only (no duplicate picks/thesis). */
-export function buildCompactLiveSection(
+/** Standalone live feed message — scores and status only. */
+export function buildLiveFeedHtml(
   legs: LegLiveState[],
   tier: PickTier,
   options: LiveSectionOptions = {}
@@ -181,7 +178,7 @@ export function buildCompactLiveSection(
   const tierLabel = formatTierLabel(tier);
   const header = options.paused
     ? `<b>⚡ Live</b> · ${tierLabel} · <i>updates stopped</i>`
-    : `<b>⚡ Live</b> · ${tierLabel} · <i>auto-updating</i>`;
+    : `<b>⚡ Live</b> · ${tierLabel}`;
 
   const lines = legs.map((state, i) => {
     const scorePart = state.scoreLine ? ` · ${state.scoreLine}` : "";
@@ -195,34 +192,41 @@ export function buildCompactLiveSection(
     return `${i + 1}. ${escapeHtml(state.matchLabel)} · ${escapeHtml(state.clock)}${scorePart}\n   ${status}`;
   });
 
-  return `${LIVE_SECTION_DIVIDER}${header}\n\n${lines.join("\n\n")}`;
+  return `${header}\n\n${lines.join("\n\n")}`;
 }
 
+/** @deprecated Live feed is a separate message, not appended to slips. */
+export function buildCompactLiveSection(
+  legs: LegLiveState[],
+  tier: PickTier,
+  options: LiveSectionOptions = {}
+): string {
+  return buildLiveFeedHtml(legs, tier, options);
+}
+
+/** @deprecated */
 export function appendLiveSection(
   slipHtml: string,
   legs: LegLiveState[],
   tier: PickTier,
   options: LiveSectionOptions = {}
 ): string {
-  const section = buildCompactLiveSection(legs, tier, options);
-  if (!section) return slipHtml;
-  return `${stripLiveSection(slipHtml)}${section}`;
+  return slipHtml;
 }
 
+/** @deprecated */
 export function stripLiveSection(html: string): string {
-  const idx = html.indexOf(LIVE_SECTION_DIVIDER);
-  if (idx < 0) return html;
-  return html.slice(0, idx);
+  return html;
 }
 
-/** @deprecated Separate live panel — use appendLiveSection on the slip message instead. */
+/** @deprecated */
 export function buildLivePitchPanelHtml(
   legs: LegLiveState[],
   options: LivePanelOptions = {}
 ): string {
-  return buildCompactLiveSection(legs, options.tier ?? "hit", {
+  return buildLiveFeedHtml(legs, options.tier ?? "hit", {
     autoWatch: options.autoWatch,
-  }).replace(LIVE_SECTION_DIVIDER, "");
+  });
 }
 
 function kickoffMinutesFromClock(clock: string): number | null {
