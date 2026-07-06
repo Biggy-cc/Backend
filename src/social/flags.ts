@@ -52,3 +52,12 @@ export function flagsForMatch(matchLabel: string): string {
   if (parts.length !== 2) return "⚽";
   return `${flagForTeam(parts[0]!)}${flagForTeam(parts[1]!)}`;
 }
+
+/** e.g. 🇵🇹 Portugal vs 🇪🇸 Spain */
+export function formatMatchWithFlags(matchLabel: string): string {
+  const parts = matchLabel.split(/\s+vs\s+/i);
+  if (parts.length !== 2) return matchLabel;
+  const home = parts[0]!.trim();
+  const away = parts[1]!.trim();
+  return `${flagForTeam(home)} ${home} vs ${flagForTeam(away)} ${away}`;
+}
