@@ -302,19 +302,17 @@ export function validateDailyBundle(
     }
     const err = validatePick(pick, tier);
     if (err) {
-      if (
-        options?.oddsFallback &&
-        tier === "go_big" &&
-        err.includes("below tier minimum")
-      ) {
+      if (options?.oddsFallback && err.includes("below tier minimum")) {
         continue;
       }
       errors.push(err);
     }
   }
 
-  const winnerConflict = validateCrossTierWinners(bundle);
-  if (winnerConflict) errors.push(winnerConflict);
+  if (!options?.skipCrossTier) {
+    const winnerConflict = validateCrossTierWinners(bundle);
+    if (winnerConflict) errors.push(winnerConflict);
+  }
 
   // Cross-tier: same match must not flip goals lean (under vs over 3.5 style)
   if (!options?.skipCrossTier) {

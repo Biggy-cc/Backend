@@ -34,8 +34,8 @@ import {
   savePickBatch,
 } from "./store.js";
 import { runMigrations } from "../db/client.js";
-import { tryCarryForwardPicks, tryPrunedCarryForward } from "./carry-forward.js";
-import { tryQuickOddsCard } from "./quick-odds.js";
+import { enrichDailyCard } from "./enrich.js";
+import { publishDailyCard } from "./publish.js";
 import { picksStaleDueToKickoff, validateBundleBettable } from "./kickoff.js";
 import { isQuotaError } from "./llm.js";
 import { buildOddsFallbackBundle, repairBundleLegs } from "./fallback.js";
@@ -215,70 +215,23 @@ async function cachedPicks(pickDate: string): Promise<Record<PickTier, string> |
   return null;
 }
 
-/** Resolve today's card: cache → carry-forward → pruned → quick odds → LLM. */
-export async function resolvePicksForDate(pickDate: string): Promise<GenerateResult> {
-  const cached = await cachedPicks(pickDate);
-  if (cached) {
-    const meta = await getPickMeta(pickDate);
-    const stale = await picksStaleDueToKickoff(pickDate);
-    if (!stale) {
-      return {
-        picks: cached,
-        version: meta?.version ?? 1,
-        updated: false,
-        changeNote: meta?.changeNote ?? null,
-      };
-    }
-    const quick = await tryQuickOddsCard(pickDate);
-    if (quick) return quick;
-    return generateDailyPicks(pickDate, { kickoffRefresh: true });
-  }
-
-  for (const attempt of [
-    tryCarryForwardPicks,
-    tryPrunedCarryForward,
-    tryQuickOddsCard,
-  ]) {
-    const result = await attempt(pickDate);
-    if (result) return result;
-  }
-
-  try {
-    return await generateDailyPicks(pickDate);
-  } catch (err) {
-    for (const attempt of [
-      tryCarryForwardPicks,
-      tryPrunedCarryForward,
-      tryQuickOddsCard,
-    ]) {
-      const result = await attempt(pickDate);
-      if (result) return result;
-    }
-    throw err;
-  }
+/** @deprecated Cron/startup only — bot must read D1, never call this on tap. */
+export async function ensureFastCard(pickDate: string): Promise<boolean> {
+  return (await publishDailyCard(pickDate)) != null;
 }
 
+/** Cron/startup: publish fast, enrich LLM in background. */
 export async function ensurePicksForToday(): Promise<void> {
   const pickDate = todayPickDate();
-  try {
-    await resolvePicksForDate(pickDate);
-    if (await cachedHasDefectiveSlips(pickDate)) {
-      await generateDailyPicks(pickDate);
-    }
-  } catch (err) {
-    console.error("[picks] ensurePicksForToday failed:", err);
-    for (const attempt of [
-      tryCarryForwardPicks,
-      tryPrunedCarryForward,
-      tryQuickOddsCard,
-    ]) {
-      const result = await attempt(pickDate);
-      if (result) return;
-    }
-    console.error("[picks] ensurePicksForToday all fallbacks failed");
+  const published = await publishDailyCard(pickDate);
+  if (published?.updated ?? published) {
+    void enrichDailyCard(pickDate).catch((err) =>
+      console.error("[picks] Background enrich failed:", err)
+    );
   }
 }
 
+/** @deprecated Use publishDailyCard + enrichDailyCard. Kept for scripts. */
 export async function generateDailyPicks(
   pickDate: string,
   options?: { force?: boolean; onlyIfChanged?: boolean; kickoffRefresh?: boolean }

@@ -4,8 +4,7 @@ import type { GenerateResult } from "./generate.js";
 import { findLatestServableBatch } from "./servable.js";
 import {
   loadStoredBatch,
-  saveBatchSnapshot,
-  savePickBatch,
+  saveFullPickBundle,
   type StoredBatch,
 } from "./store.js";
 import { formatPickSlip, type GeneratedPick, type PickTier } from "./types.js";
@@ -31,6 +30,7 @@ export async function persistPickBundle(
   const thesis = options.thesis ?? bundle.dailyThesis;
   const thesisJson = JSON.stringify(thesis);
   const output: Record<PickTier, string> = { hit: "", aim: "", go_big: "" };
+  const tierContents: Array<{ tier: PickTier; content: string }> = [];
 
   for (const tier of TIERS) {
     const raw = bundle.picks[tier];
@@ -44,10 +44,17 @@ export async function persistPickBundle(
     };
     const content = formatPickSlip(pick);
     output[tier] = content;
-    await savePickBatch(pickDate, tier, content, version, thesisJson, changeNote);
+    tierContents.push({ tier, content });
   }
 
-  await saveBatchSnapshot(pickDate, version, thesis, bundle.picks, changeNote);
+  await saveFullPickBundle(
+    pickDate,
+    version,
+    tierContents,
+    thesis,
+    bundle.picks,
+    changeNote
+  );
 
   return {
     picks: output,

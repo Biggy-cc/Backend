@@ -1,22 +1,13 @@
 import type { Bot } from "grammy";
-import { tryCarryForwardPicks, tryPrunedCarryForward } from "../picks/carry-forward.js";
-import { generateDailyPicks, todayPickDate } from "../picks/generate.js";
-import { tryQuickOddsCard } from "../picks/quick-odds.js";
+import { enrichDailyCard } from "../picks/enrich.js";
+import { publishDailyCard } from "../picks/publish.js";
+import { todayPickDate } from "../picks/generate.js";
 import { picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import { loadStoredBatch } from "../picks/store.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { listActiveUserIds } from "../db/users.js";
 import { postDailyFreePick, postPickUpdate, postNewWins } from "../social/posts.js";
-
-function isNoFixturesError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return (
-    msg.includes("No upcoming fixtures") ||
-    msg.includes("Not enough odds") ||
-    msg.includes("no bundle produced")
-  );
-}
 
 async function broadcastToActiveUsers(
   bot: Bot,
@@ -54,22 +45,23 @@ export async function runRefreshPicks(bot: Bot) {
 
   const hadBatchBefore = await loadStoredBatch(pickDate);
   if (!hadBatchBefore) {
-    for (const attempt of [tryCarryForwardPicks, tryPrunedCarryForward, tryQuickOddsCard]) {
-      const carried = await attempt(pickDate);
-      if (carried) {
-        console.log(`[refresh] First card for ${pickDate} via ${attempt.name}`);
-        const userIds = await listActiveUserIds();
-        for (const telegramId of userIds) {
-          try {
-            await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
-              reply_markup: dailyMenuKeyboard(),
-            });
-          } catch (err) {
-            console.warn(`[refresh] Could not notify ${telegramId}:`, err);
-          }
+    const published = await publishDailyCard(pickDate);
+    if (published) {
+      console.log(`[refresh] Published first card for ${pickDate}`);
+      void enrichDailyCard(pickDate).catch((err) =>
+        console.error("[refresh] Background enrich failed:", err)
+      );
+      const userIds = await listActiveUserIds();
+      for (const telegramId of userIds) {
+        try {
+          await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
+            reply_markup: dailyMenuKeyboard(),
+          });
+        } catch (err) {
+          console.warn(`[refresh] Could not notify ${telegramId}:`, err);
         }
-        return;
       }
+      return;
     }
   }
 
@@ -78,17 +70,17 @@ export async function runRefreshPicks(bot: Bot) {
     let result;
 
     if (kickoffStale) {
-      result = await generateDailyPicks(pickDate, { kickoffRefresh: true });
-    } else {
-      const oddsRefresh = await refreshStoredOdds(pickDate);
-      if (oddsRefresh?.updated) {
-        result = oddsRefresh;
-      } else {
-        result = await generateDailyPicks(pickDate, { onlyIfChanged: true });
+      result = await publishDailyCard(pickDate, { force: true });
+      if (result) {
+        void enrichDailyCard(pickDate).catch((err) =>
+          console.error("[refresh] Background enrich failed:", err)
+        );
       }
+    } else {
+      result = (await refreshStoredOdds(pickDate)) ?? undefined;
     }
 
-    if (!result.updated || (result.version <= 1 && hadBatchBefore)) {
+    if (!result?.updated || ((result.version ?? 0) <= 1 && hadBatchBefore)) {
       console.log("[refresh] No update needed");
       return;
     }
@@ -131,43 +123,21 @@ export async function runRefreshPicks(bot: Bot) {
 
 export async function runDailyDrop(bot: Bot) {
   const pickDate = todayPickDate();
-  console.log(`[cron] Generating picks for ${pickDate}…`);
+  console.log(`[cron] Publishing picks for ${pickDate}…`);
 
-  let ready = false;
-
-  try {
-    const result = await generateDailyPicks(pickDate);
-    if (!result.updated && result.version > 0) {
-      console.log(`[cron] Using existing v${result.version}`);
-    }
-    ready = true;
-  } catch (err) {
-    console.error("[cron] Pick generation failed:", err);
-    for (const attempt of [tryCarryForwardPicks, tryPrunedCarryForward, tryQuickOddsCard]) {
-      const carried = await attempt(pickDate);
-      if (carried) {
-        console.log(`[cron] ${attempt.name} saved card for ${pickDate}`);
-        ready = true;
-        break;
-      }
-    }
-    if (!ready) {
-      if (isNoFixturesError(err)) {
-        const notice = await restDayNotice();
-        const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
-        console.log(`[cron] Rest-day notice sent to ${count} users`);
-      } else {
-        const count = await broadcastToActiveUsers(
-          bot,
-          "Today's card is delayed — we're still lining up the best value. Check back shortly."
-        );
-        console.log(`[cron] Delay notice sent to ${count} users`);
-      }
-      return;
-    }
+  const published = await publishDailyCard(pickDate);
+  if (!published) {
+    const notice = await restDayNotice();
+    const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
+    console.log(`[cron] Rest-day notice sent to ${count} users`);
+    return;
   }
 
-  if (!ready) return;
+  if (published.updated) {
+    void enrichDailyCard(pickDate).catch((err) =>
+      console.error("[cron] Background enrich failed:", err)
+    );
+  }
 
   const count = await broadcastToActiveUsers(bot, DAILY_DROP_TEXT);
   console.log(`[cron] Broadcasting to ${count} users`);

@@ -69,7 +69,7 @@ export async function tryQuickOddsCard(
   const allowedMatches = bundles.map((b) => fixtureLabel(b.fixture));
   const errors = validateDailyBundle(bundle, {
     allowedMatches,
-    skipCrossTier: false,
+    skipCrossTier: true,
     oddsFallback: true,
   });
   if (errors.length > 0) {

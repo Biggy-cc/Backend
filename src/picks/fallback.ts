@@ -9,6 +9,7 @@ import {
   validateDuplicateLegs,
   validateLegsCompatible,
 } from "./validate.js";
+import type { PickTier } from "./types.js";
 
 type Bundle = EnrichedMatch & { odds: TxlineOddsEntry[] };
 
@@ -405,11 +406,134 @@ export function repairBundleLegs(
   return repaired;
 }
 
+type SimpleLeg = ReturnType<typeof leg>;
+
+function collectCandidateLegs(bundle: Bundle): SimpleLeg[] {
+  const m = fixtureLabel(bundle.fixture);
+  const out: SimpleLeg[] = [];
+  const seen = new Set<string>();
+
+  const add = (entry?: TxlineOddsEntry) => {
+    if (!entry) return;
+    const key = `${m}|${entry.Selection.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(leg(m, entry));
+  };
+
+  add(favoriteWin(bundle.fixture, bundle.odds));
+  add(underdogWin(bundle.fixture, bundle.odds));
+  add(drawOdds(bundle.odds));
+  for (const o of allOverGoals(bundle.odds)) add(o);
+  for (const o of bundle.odds.filter(
+    (x) =>
+      x.MarketType === "Total Goals" &&
+      x.Selection.toLowerCase().startsWith("under")
+  )) {
+    add(o);
+  }
+  for (const o of bundle.odds.filter((x) => x.MarketType === "Asian Handicap")) {
+    add(o);
+  }
+
+  return out;
+}
+
+function comboValid(legs: SimpleLeg[]): boolean {
+  if (validateDuplicateLegs(legs)) return false;
+  return validateLegsCompatible(legs) == null;
+}
+
+function findTierCombo(
+  pools: SimpleLeg[][],
+  legMin: number,
+  legMax: number,
+  combinedMin: number,
+  combinedMax: number,
+  tier?: PickTier
+): SimpleLeg[] | null {
+  const legs = pools.flat();
+  if (legs.length < legMin) return null;
+
+  let best: SimpleLeg[] | null = null;
+  let bestScore = Infinity;
+  const distinctMatchesAvailable = pools.length;
+
+  function* choose(k: number, start: number, picked: SimpleLeg[]): Generator<SimpleLeg[]> {
+    if (picked.length === k) {
+      yield picked;
+      return;
+    }
+    for (let i = start; i < legs.length; i++) {
+      yield* choose(k, i + 1, [...picked, legs[i]]);
+    }
+  }
+
+  for (let k = legMin; k <= Math.min(legMax, legs.length); k++) {
+    for (const combo of choose(k, 0, [])) {
+      if (!comboValid(combo)) continue;
+      if (tier && validateCorrelatedLegs(combo, tier)) continue;
+
+      const distinctMatches = new Set(combo.map((l) => l.match)).size;
+      if (k >= 2 && distinctMatchesAvailable >= 2 && distinctMatches < 2) continue;
+      if (tier === "go_big" && distinctMatchesAvailable >= 2 && distinctMatches < 2) continue;
+
+      const combined = productOdds(combo);
+      if (combined < combinedMin || combined > combinedMax) continue;
+
+      const mid = (combinedMin + combinedMax) / 2;
+      const score = Math.abs(combined - mid) - distinctMatches * 0.05;
+      if (score < bestScore) {
+        bestScore = score;
+        best = combo;
+      }
+    }
+  }
+
+  return best;
+}
+
+/** Build a card from whatever markets TxLINE has — works with thin partial odds. */
+export function buildMinimalOddsBundle(bundles: Bundle[]): DailyPicksBundle | null {
+  const withOdds = bundles.filter((b) => b.odds.length > 0);
+  if (!withOdds.length) return null;
+
+  const pools = withOdds.map(collectCandidateLegs).filter((p) => p.length > 0);
+  if (!pools.length) return null;
+
+  const hitLegs = findTierCombo(pools, 2, 2, 1.3, 2.05, "hit");
+  const aimLegs = findTierCombo(pools, 2, 3, 3.0, 10.0, "aim");
+  const goBigLegs = findTierCombo(pools, 3, 4, 10.0, 120.0, "go_big");
+
+  if (!hitLegs || !aimLegs || !goBigLegs) return null;
+
+  const matches = [...new Set([...hitLegs, ...aimLegs, ...goBigLegs].map((l) => l.match))];
+
+  return {
+    dailyThesis: matches.map((match) => ({
+      match,
+      summary: `Pre-match lines from TxLINE for ${match}.`,
+      winnerLean: match.split(" vs ")[0]?.trim() ?? match,
+      goalsLean: "medium" as const,
+      bttsLean: "neutral" as const,
+    })),
+    picks: {
+      hit: { legs: hitLegs, combinedOdds: productOdds(hitLegs), breakdown: "" },
+      aim: { legs: aimLegs, combinedOdds: productOdds(aimLegs), breakdown: "" },
+      go_big: { legs: goBigLegs, combinedOdds: productOdds(goBigLegs), breakdown: "" },
+    },
+  };
+}
+
 export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   const withOdds = bundles.filter((b) => b.odds.length > 0);
   if (withOdds.length === 0) {
     throw new Error("Not enough odds to build fallback picks");
   }
+
+  const minimal = buildMinimalOddsBundle(withOdds);
+  if (minimal) return minimal;
+
   if (withOdds.length === 1) {
     return buildSingleMatchFallback(withOdds[0]);
   }

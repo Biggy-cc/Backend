@@ -1,4 +1,4 @@
-import { dbAll, dbGet, dbRun } from "../db/client.js";
+import { dbAll, dbBatch, dbGet, dbRun } from "../db/client.js";
 import type { PickTier } from "./types.js";
 import type { DailyPicksBundle, MatchThesis } from "./validate.js";
 
@@ -55,6 +55,46 @@ export async function archiveCurrentPicks(
       row.change_note
     );
   }
+}
+
+export async function saveFullPickBundle(
+  pickDate: string,
+  version: number,
+  tierContents: Array<{ tier: PickTier; content: string }>,
+  thesis: MatchThesis[],
+  picks: DailyPicksBundle["picks"],
+  changeNote: string | null
+): Promise<void> {
+  const thesisJson = JSON.stringify(thesis);
+  const statements: Array<{ sql: string; params: unknown[] }> = [];
+
+  for (const { tier, content } of tierContents) {
+    statements.push({
+      sql: `INSERT INTO daily_picks (pick_date, tier, content, version, thesis_json, change_note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(pick_date, tier) DO UPDATE SET
+         content = excluded.content,
+         version = excluded.version,
+         thesis_json = excluded.thesis_json,
+         change_note = excluded.change_note,
+         created_at = datetime('now')`,
+      params: [pickDate, tier, content, version, thesisJson, changeNote],
+    });
+  }
+
+  statements.push({
+    sql: `INSERT OR REPLACE INTO daily_pick_batches (pick_date, version, thesis_json, picks_json, change_note, created_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+    params: [
+      pickDate,
+      version,
+      thesisJson,
+      JSON.stringify(picks),
+      changeNote,
+    ],
+  });
+
+  await dbBatch(statements);
 }
 
 export async function savePickBatch(

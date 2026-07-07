@@ -1,7 +1,7 @@
 import Database, { type Database as SqliteDatabase } from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { getD1Config, d1Exec, d1Query } from "./d1-client.js";
+import { getD1Config, d1Batch, d1Exec, d1Query } from "./d1-client.js";
 import { BASE_SCHEMA, SQLITE_ALTER_STATEMENTS } from "./schema.js";
 
 export type DbBackend = "sqlite" | "d1";
@@ -31,6 +31,24 @@ export const db: SqliteDatabase = new Proxy({} as SqliteDatabase, {
     return Reflect.get(sqlite(), prop);
   },
 });
+
+export async function dbBatch(
+  statements: Array<{ sql: string; params?: unknown[] }>
+): Promise<void> {
+  if (getDbBackend() === "d1") {
+    if (!d1Config) d1Config = getD1Config();
+    if (!d1Config) throw new Error("D1 not configured");
+    await d1Batch(d1Config, statements);
+    return;
+  }
+  const database = sqlite();
+  const run = database.transaction((stmts: typeof statements) => {
+    for (const { sql, params = [] } of stmts) {
+      database.prepare(sql).run(...params);
+    }
+  });
+  run(statements);
+}
 
 export async function dbRun(sql: string, ...params: unknown[]): Promise<void> {
   if (getDbBackend() === "d1") {
