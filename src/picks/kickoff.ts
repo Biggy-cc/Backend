@@ -80,8 +80,13 @@ export async function validateBundleBettable(
 }
 
 export async function picksStaleDueToKickoff(pickDate: string): Promise<boolean> {
-  const usedMatches = await collectUsedMatches(pickDate);
-  if (usedMatches.size === 0) return false;
+  let usedMatches = await collectUsedMatches(pickDate);
+  if (usedMatches.size === 0) {
+    const { findLatestServableBatch, batchLegMatches } = await import("./servable.js");
+    const latest = await findLatestServableBatch();
+    if (!latest) return false;
+    usedMatches = batchLegMatches(latest.batch);
+  }
 
   const all = await fetchFixturesSnapshot();
   const wc = all.filter(isWorldCupFixture);

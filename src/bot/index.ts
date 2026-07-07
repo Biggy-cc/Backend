@@ -29,9 +29,9 @@ import {
   stopLiveFeed,
 } from "../picks/live-watch.js";
 import {
-  generateDailyPicks,
   getCachedPick,
   isPickGenerationInFlight,
+  resolvePicksForDate,
   todayPickDate,
 } from "../picks/generate.js";
 import {
@@ -110,27 +110,29 @@ async function startBotPolling(): Promise<void> {
     const pickDate = todayPickDate();
     let content = await getCachedPick(pickDate, tier);
 
-    if (content && (await isPickContentStale(content))) {
-      const next = await upcomingBettableSummary(3);
-      await ctx.reply(
-        `This slip covers fixtures that already kicked off. Next up: ${next}. The refresh will update today's card. Try again shortly.`
-      );
-      return;
-    }
-
-    if (!content) {
+    if (!content || (await isPickContentStale(content))) {
       const building = isPickGenerationInFlight();
       await ctx.reply(
         building
           ? "Today's card is almost ready — hang tight (about a minute)."
-          : "No football card cached yet. Building today's picks (about a minute)."
+          : content
+            ? "Refreshing today's card with the next upcoming fixtures…"
+            : "No football card cached yet. Building today's picks (about a minute)."
       );
       try {
-        await generateDailyPicks(pickDate);
+        await resolvePicksForDate(pickDate);
         content = await getCachedPick(pickDate, tier);
       } catch (err) {
-        console.error("[bot] On-demand pick generation failed:", err);
+        console.error("[bot] On-demand pick resolution failed:", err);
       }
+    }
+
+    if (content && (await isPickContentStale(content))) {
+      const next = await upcomingBettableSummary(3);
+      await ctx.reply(
+        `This slip covers fixtures that already kicked off. Next up: ${next}. Try again shortly.`
+      );
+      return;
     }
 
     if (!content) {

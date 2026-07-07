@@ -1,6 +1,8 @@
 import type { Bot } from "grammy";
+import { tryCarryForwardPicks } from "../picks/carry-forward.js";
 import { generateDailyPicks, todayPickDate } from "../picks/generate.js";
 import { picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
+import { loadStoredBatch } from "../picks/store.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { listActiveUserIds } from "../db/users.js";
@@ -49,6 +51,25 @@ export async function runRefreshPicks(bot: Bot) {
   const pickDate = todayPickDate();
   console.log(`[refresh] Checking picks for ${pickDate}…`);
 
+  const hadBatchBefore = await loadStoredBatch(pickDate);
+  if (!hadBatchBefore) {
+    const carried = await tryCarryForwardPicks(pickDate);
+    if (carried) {
+      console.log(`[refresh] Carried forward first card for ${pickDate}`);
+      const userIds = await listActiveUserIds();
+      for (const telegramId of userIds) {
+        try {
+          await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
+            reply_markup: dailyMenuKeyboard(),
+          });
+        } catch (err) {
+          console.warn(`[refresh] Could not notify ${telegramId}:`, err);
+        }
+      }
+      return;
+    }
+  }
+
   try {
     const kickoffStale = await picksStaleDueToKickoff(pickDate);
     let result;
@@ -64,7 +85,7 @@ export async function runRefreshPicks(bot: Bot) {
       }
     }
 
-    if (!result.updated || result.version <= 1) {
+    if (!result.updated || (result.version <= 1 && hadBatchBefore)) {
       console.log("[refresh] No update needed");
       return;
     }
@@ -109,20 +130,36 @@ export async function runDailyDrop(bot: Bot) {
   const pickDate = todayPickDate();
   console.log(`[cron] Generating picks for ${pickDate}…`);
 
+  let ready = false;
+
   try {
     const result = await generateDailyPicks(pickDate);
     if (!result.updated && result.version > 0) {
       console.log(`[cron] Using existing v${result.version}`);
     }
+    ready = true;
   } catch (err) {
     console.error("[cron] Pick generation failed:", err);
-    if (isNoFixturesError(err)) {
+    const carried = await tryCarryForwardPicks(pickDate);
+    if (carried) {
+      console.log(`[cron] Carried forward servable card for ${pickDate}`);
+      ready = true;
+    } else if (isNoFixturesError(err)) {
       const notice = await restDayNotice();
       const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
       console.log(`[cron] Rest-day notice sent to ${count} users`);
+      return;
+    } else {
+      const count = await broadcastToActiveUsers(
+        bot,
+        "Today's card is delayed — we're still lining up the best value. Check back shortly."
+      );
+      console.log(`[cron] Delay notice sent to ${count} users`);
+      return;
     }
-    return;
   }
+
+  if (!ready) return;
 
   const count = await broadcastToActiveUsers(bot, DAILY_DROP_TEXT);
   console.log(`[cron] Broadcasting to ${count} users`);
