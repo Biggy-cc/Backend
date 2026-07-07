@@ -1,10 +1,49 @@
 import type { Bot } from "grammy";
 import { generateDailyPicks, todayPickDate } from "../picks/generate.js";
-import { picksStaleDueToKickoff } from "../picks/kickoff.js";
+import { picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { listActiveUserIds } from "../db/users.js";
 import { postDailyFreePick, postPickUpdate, postNewWins } from "../social/posts.js";
+
+function isNoFixturesError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("No upcoming fixtures") ||
+    msg.includes("Not enough odds") ||
+    msg.includes("no bundle produced")
+  );
+}
+
+async function broadcastToActiveUsers(
+  bot: Bot,
+  text: string,
+  options: { parseMode?: "HTML" } = {}
+): Promise<number> {
+  const userIds = await listActiveUserIds();
+  for (const telegramId of userIds) {
+    try {
+      await bot.api.sendMessage(telegramId, text, {
+        parse_mode: options.parseMode,
+        reply_markup: dailyMenuKeyboard(),
+      });
+    } catch (err) {
+      console.warn(`[cron] Could not message ${telegramId}:`, err);
+    }
+  }
+  return userIds.length;
+}
+
+async function restDayNotice(): Promise<string> {
+  const next = await upcomingBettableSummary(3);
+  return `⚽ <b>No matches on today's card</b>
+
+Nothing to price in the current World Cup window.
+
+Next up: ${next}.
+
+We'll message you when the next slip is ready.`;
+}
 
 export async function runRefreshPicks(bot: Bot) {
   const pickDate = todayPickDate();
@@ -77,21 +116,16 @@ export async function runDailyDrop(bot: Bot) {
     }
   } catch (err) {
     console.error("[cron] Pick generation failed:", err);
+    if (isNoFixturesError(err)) {
+      const notice = await restDayNotice();
+      const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
+      console.log(`[cron] Rest-day notice sent to ${count} users`);
+    }
     return;
   }
 
-  const userIds = await listActiveUserIds();
-  console.log(`[cron] Broadcasting to ${userIds.length} users`);
-
-  for (const telegramId of userIds) {
-    try {
-      await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
-        reply_markup: dailyMenuKeyboard(),
-      });
-    } catch (err) {
-      console.warn(`[cron] Could not message ${telegramId}:`, err);
-    }
-  }
+  const count = await broadcastToActiveUsers(bot, DAILY_DROP_TEXT);
+  console.log(`[cron] Broadcasting to ${count} users`);
 
   void postDailyFreePick(pickDate, bot).catch((err) =>
     console.error("[social] Daily free pick post failed:", err)
