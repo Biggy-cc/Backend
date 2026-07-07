@@ -1,4 +1,5 @@
-import { validateBundleBettable } from "./kickoff.js";
+import { dbAll } from "../db/client.js";
+import { filterBettableLegs, validateBundleBettable } from "./kickoff.js";
 import type { GenerateResult } from "./generate.js";
 import { findLatestServableBatch } from "./servable.js";
 import {
@@ -8,20 +9,31 @@ import {
   type StoredBatch,
 } from "./store.js";
 import { formatPickSlip, type GeneratedPick, type PickTier } from "./types.js";
+import {
+  productOdds,
+  type DailyPicksBundle,
+  type MatchThesis,
+} from "./validate.js";
 
 const TIERS: PickTier[] = ["hit", "aim", "go_big"];
 
-async function saveCarriedBatch(
+export async function persistPickBundle(
   pickDate: string,
-  batch: StoredBatch,
-  changeNote: string
+  bundle: DailyPicksBundle,
+  options: {
+    version?: number;
+    changeNote?: string | null;
+    thesis?: MatchThesis[];
+  } = {}
 ): Promise<GenerateResult> {
-  const version = 1;
-  const thesisJson = JSON.stringify(batch.thesis);
+  const version = options.version ?? 1;
+  const changeNote = options.changeNote ?? null;
+  const thesis = options.thesis ?? bundle.dailyThesis;
+  const thesisJson = JSON.stringify(thesis);
   const output: Record<PickTier, string> = { hit: "", aim: "", go_big: "" };
 
   for (const tier of TIERS) {
-    const raw = batch.picks[tier];
+    const raw = bundle.picks[tier];
     const pick: GeneratedPick = {
       tier,
       version,
@@ -35,7 +47,7 @@ async function saveCarriedBatch(
     await savePickBatch(pickDate, tier, content, version, thesisJson, changeNote);
   }
 
-  await saveBatchSnapshot(pickDate, version, batch.thesis, batch.picks, changeNote);
+  await saveBatchSnapshot(pickDate, version, thesis, bundle.picks, changeNote);
 
   return {
     picks: output,
@@ -45,6 +57,17 @@ async function saveCarriedBatch(
   };
 }
 
+async function saveCarriedBatch(
+  pickDate: string,
+  batch: StoredBatch,
+  changeNote: string
+): Promise<GenerateResult> {
+  return persistPickBundle(
+    pickDate,
+    { dailyThesis: batch.thesis, picks: batch.picks },
+    { version: 1, changeNote, thesis: batch.thesis }
+  );
+}
 /** Copy the latest bettable card onto a new date when today has no batch yet. */
 export async function tryCarryForwardPicks(
   pickDate: string
@@ -58,6 +81,65 @@ export async function tryCarryForwardPicks(
   console.log(`[picks] Carrying forward ${servable.pickDate} → ${pickDate}`);
 
   return saveCarriedBatch(pickDate, servable.batch, changeNote);
+}
+
+/** Copy bettable legs from the latest stored batch when the full card has started matches. */
+export async function tryPrunedCarryForward(
+  pickDate: string
+): Promise<GenerateResult | null> {
+  if (await loadStoredBatch(pickDate)) return null;
+
+  const dates = await dbAll<{ pick_date: string }>(
+    `SELECT DISTINCT pick_date FROM daily_pick_batches ORDER BY pick_date DESC LIMIT 1`
+  );
+  if (dates.length === 0) return null;
+
+  const sourceDate = dates[0].pick_date;
+  if (sourceDate === pickDate) return null;
+
+  const batch = await loadStoredBatch(sourceDate);
+  if (!batch) return null;
+
+  const prunedPicks: DailyPicksBundle["picks"] = {
+    hit: { legs: [], combinedOdds: 0, breakdown: "" },
+    aim: { legs: [], combinedOdds: 0, breakdown: "" },
+    go_big: { legs: [], combinedOdds: 0, breakdown: "" },
+  };
+
+  const usedMatches = new Set<string>();
+
+  for (const tier of TIERS) {
+    const bettable = await filterBettableLegs(batch.picks[tier].legs);
+    if (bettable.length === 0) return null;
+    prunedPicks[tier] = {
+      legs: bettable,
+      combinedOdds: productOdds(bettable),
+      breakdown: batch.picks[tier].breakdown,
+    };
+    for (const leg of bettable) usedMatches.add(leg.match);
+  }
+
+  const prunedThesis = batch.thesis.filter((t) => usedMatches.has(t.match));
+  const bundle: DailyPicksBundle = {
+    dailyThesis: prunedThesis,
+    picks: prunedPicks,
+  };
+
+  const err = await validateBundleBettable(bundle);
+  if (err) {
+    console.log(`[picks] Pruned carry-forward from ${sourceDate} not bettable: ${err}`);
+    return null;
+  }
+
+  const changeNote =
+    "Today's card — bettable legs carried forward; started matches removed.";
+  console.log(`[picks] Pruned carry-forward ${sourceDate} → ${pickDate}`);
+
+  return persistPickBundle(pickDate, bundle, {
+    version: 1,
+    changeNote,
+    thesis: prunedThesis,
+  });
 }
 
 /** Ensure today's stored batch is bettable; re-save under today if only an older date has legs. */

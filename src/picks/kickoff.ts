@@ -57,6 +57,24 @@ function findFixture(matchName: string, fixtures: TxlineFixture[]) {
   );
 }
 
+export async function isLegBettable(matchName: string): Promise<boolean> {
+  const all = await fetchFixturesSnapshot();
+  const wc = all.filter(isWorldCupFixture);
+  const fixture = findFixture(normalizeMatchName(matchName), wc);
+  if (!fixture) return false;
+  return isBettableFixture(fixture);
+}
+
+export async function filterBettableLegs<T extends { match: string }>(
+  legs: T[]
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const leg of legs) {
+    if (await isLegBettable(leg.match)) out.push(leg);
+  }
+  return out;
+}
+
 export async function validateBundleBettable(
   bundle: DailyPicksBundle
 ): Promise<string | null> {

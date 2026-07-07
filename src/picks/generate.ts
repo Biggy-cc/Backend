@@ -34,7 +34,8 @@ import {
   savePickBatch,
 } from "./store.js";
 import { runMigrations } from "../db/client.js";
-import { tryCarryForwardPicks } from "./carry-forward.js";
+import { tryCarryForwardPicks, tryPrunedCarryForward } from "./carry-forward.js";
+import { tryQuickOddsCard } from "./quick-odds.js";
 import { picksStaleDueToKickoff, validateBundleBettable } from "./kickoff.js";
 import { isQuotaError } from "./llm.js";
 import { buildOddsFallbackBundle, repairBundleLegs } from "./fallback.js";
@@ -214,7 +215,7 @@ async function cachedPicks(pickDate: string): Promise<Record<PickTier, string> |
   return null;
 }
 
-/** Resolve today's card: cache → carry-forward → generate → carry-forward fallback. */
+/** Resolve today's card: cache → carry-forward → pruned → quick odds → LLM. */
 export async function resolvePicksForDate(pickDate: string): Promise<GenerateResult> {
   const cached = await cachedPicks(pickDate);
   if (cached) {
@@ -228,17 +229,31 @@ export async function resolvePicksForDate(pickDate: string): Promise<GenerateRes
         changeNote: meta?.changeNote ?? null,
       };
     }
+    const quick = await tryQuickOddsCard(pickDate);
+    if (quick) return quick;
     return generateDailyPicks(pickDate, { kickoffRefresh: true });
   }
 
-  const carried = await tryCarryForwardPicks(pickDate);
-  if (carried) return carried;
+  for (const attempt of [
+    tryCarryForwardPicks,
+    tryPrunedCarryForward,
+    tryQuickOddsCard,
+  ]) {
+    const result = await attempt(pickDate);
+    if (result) return result;
+  }
 
   try {
     return await generateDailyPicks(pickDate);
   } catch (err) {
-    const fallback = await tryCarryForwardPicks(pickDate);
-    if (fallback) return fallback;
+    for (const attempt of [
+      tryCarryForwardPicks,
+      tryPrunedCarryForward,
+      tryQuickOddsCard,
+    ]) {
+      const result = await attempt(pickDate);
+      if (result) return result;
+    }
     throw err;
   }
 }
@@ -252,10 +267,15 @@ export async function ensurePicksForToday(): Promise<void> {
     }
   } catch (err) {
     console.error("[picks] ensurePicksForToday failed:", err);
-    const carried = await tryCarryForwardPicks(pickDate);
-    if (!carried) {
-      console.error("[picks] ensurePicksForToday carry-forward also failed");
+    for (const attempt of [
+      tryCarryForwardPicks,
+      tryPrunedCarryForward,
+      tryQuickOddsCard,
+    ]) {
+      const result = await attempt(pickDate);
+      if (result) return;
     }
+    console.error("[picks] ensurePicksForToday all fallbacks failed");
   }
 }
 

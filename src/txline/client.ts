@@ -248,7 +248,7 @@ export function fixturesForToday(fixtures: TxlineFixture[]): TxlineFixture[] {
   });
 }
 
-/** Upcoming WC/friendly fixtures for picks — skips started games, looks ~48h ahead. */
+/** Upcoming WC/friendly fixtures for picks — skips started games, takes next bettable kickoffs. */
 export function selectPicksFixtures(
   all: TxlineFixture[],
   options?: { max?: number; now?: Date }
@@ -256,16 +256,11 @@ export function selectPicksFixtures(
   const max = options?.max ?? 8;
   const now = options?.now ?? new Date();
   const nowMs = now.getTime();
-  const horizonEnd = new Date(now);
-  horizonEnd.setUTCDate(horizonEnd.getUTCDate() + 2);
 
   return all
     .filter(isWorldCupFixture)
     .filter((f) => isBettableFixture(f, nowMs))
-    .filter((f) => {
-      const k = fixtureKickoffMs(f);
-      return k >= nowMs && k < horizonEnd.getTime();
-    })
+    .filter((f) => fixtureKickoffMs(f) >= nowMs)
     .sort((a, b) => fixtureKickoffMs(a) - fixtureKickoffMs(b))
     .slice(0, max);
 }

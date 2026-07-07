@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
-import { tryCarryForwardPicks } from "../picks/carry-forward.js";
+import { tryCarryForwardPicks, tryPrunedCarryForward } from "../picks/carry-forward.js";
 import { generateDailyPicks, todayPickDate } from "../picks/generate.js";
+import { tryQuickOddsCard } from "../picks/quick-odds.js";
 import { picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import { loadStoredBatch } from "../picks/store.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
@@ -53,20 +54,22 @@ export async function runRefreshPicks(bot: Bot) {
 
   const hadBatchBefore = await loadStoredBatch(pickDate);
   if (!hadBatchBefore) {
-    const carried = await tryCarryForwardPicks(pickDate);
-    if (carried) {
-      console.log(`[refresh] Carried forward first card for ${pickDate}`);
-      const userIds = await listActiveUserIds();
-      for (const telegramId of userIds) {
-        try {
-          await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
-            reply_markup: dailyMenuKeyboard(),
-          });
-        } catch (err) {
-          console.warn(`[refresh] Could not notify ${telegramId}:`, err);
+    for (const attempt of [tryCarryForwardPicks, tryPrunedCarryForward, tryQuickOddsCard]) {
+      const carried = await attempt(pickDate);
+      if (carried) {
+        console.log(`[refresh] First card for ${pickDate} via ${attempt.name}`);
+        const userIds = await listActiveUserIds();
+        for (const telegramId of userIds) {
+          try {
+            await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
+              reply_markup: dailyMenuKeyboard(),
+            });
+          } catch (err) {
+            console.warn(`[refresh] Could not notify ${telegramId}:`, err);
+          }
         }
+        return;
       }
-      return;
     }
   }
 
@@ -140,21 +143,26 @@ export async function runDailyDrop(bot: Bot) {
     ready = true;
   } catch (err) {
     console.error("[cron] Pick generation failed:", err);
-    const carried = await tryCarryForwardPicks(pickDate);
-    if (carried) {
-      console.log(`[cron] Carried forward servable card for ${pickDate}`);
-      ready = true;
-    } else if (isNoFixturesError(err)) {
-      const notice = await restDayNotice();
-      const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
-      console.log(`[cron] Rest-day notice sent to ${count} users`);
-      return;
-    } else {
-      const count = await broadcastToActiveUsers(
-        bot,
-        "Today's card is delayed — we're still lining up the best value. Check back shortly."
-      );
-      console.log(`[cron] Delay notice sent to ${count} users`);
+    for (const attempt of [tryCarryForwardPicks, tryPrunedCarryForward, tryQuickOddsCard]) {
+      const carried = await attempt(pickDate);
+      if (carried) {
+        console.log(`[cron] ${attempt.name} saved card for ${pickDate}`);
+        ready = true;
+        break;
+      }
+    }
+    if (!ready) {
+      if (isNoFixturesError(err)) {
+        const notice = await restDayNotice();
+        const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
+        console.log(`[cron] Rest-day notice sent to ${count} users`);
+      } else {
+        const count = await broadcastToActiveUsers(
+          bot,
+          "Today's card is delayed — we're still lining up the best value. Check back shortly."
+        );
+        console.log(`[cron] Delay notice sent to ${count} users`);
+      }
       return;
     }
   }

@@ -136,8 +136,9 @@ async function startBotPolling(): Promise<void> {
     }
 
     if (!content) {
+      const next = await upcomingBettableSummary(3);
       await ctx.reply(
-        "I couldn't build today's football card yet (usually the 8:00 UTC morning drop). Fixtures are coming up. Try again in a few minutes or tap /picks."
+        `I couldn't build today's football card yet. Next fixtures: ${next}. If lines aren't on TxLINE yet, we'll post as soon as odds land — try again shortly or tap /picks.`
       );
       return;
     }
