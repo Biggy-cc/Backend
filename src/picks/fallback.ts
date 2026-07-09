@@ -71,6 +71,7 @@ function pickBestHitLegs(bundle: Bundle): ReturnType<typeof leg>[] {
       const a = leg(m, markets[i]);
       const b = leg(m, markets[j]);
       if (validateLegsCompatible([a, b])) continue;
+      if (validateCorrelatedLegs([a, b])) continue;
       const combined = productOdds([a, b]);
       if (combined > 2.05 || combined < 1.25) continue;
       const bothOvers =
@@ -292,6 +293,7 @@ function buildSingleMatchFallback(bundle: Bundle): DailyPicksBundle {
   const m = fixtureLabel(bundle.fixture);
   const pWin = favoriteWin(bundle.fixture, bundle.odds);
   const pOver25 = overGoals(bundle.odds, 2.5) ?? overGoals(bundle.odds, 2.25);
+  console.log("[fallback-debug] buildSingleMatchFallback for:", m, "pWin:", pWin?.Selection, "pOver25:", pOver25?.Selection, "raw odds:", JSON.stringify(bundle.odds));
 
   if (!pWin || !pOver25) {
     throw new Error("Not enough odds to build fallback picks");
@@ -527,6 +529,7 @@ export function buildMinimalOddsBundle(bundles: Bundle[]): DailyPicksBundle | nu
 
 export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   const withOdds = bundles.filter((b) => b.odds.length > 0);
+  console.log("[fallback-debug] withOdds count:", withOdds.length, "fixtures:", withOdds.map(b => `${fixtureLabel(b.fixture)} (odds: ${b.odds.length})`));
   if (withOdds.length === 0) {
     throw new Error("Not enough odds to build fallback picks");
   }

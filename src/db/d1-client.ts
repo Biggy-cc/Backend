@@ -75,7 +75,7 @@ export async function d1Batch(
       Authorization: `Bearer ${config.apiToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(statements),
+    body: JSON.stringify({ batch: statements }),
   });
 
   const body = (await res.json()) as D1QueryResult;
