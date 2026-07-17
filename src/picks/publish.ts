@@ -6,6 +6,7 @@ import {
   selectPicksFixtures,
   type TxlineOddsEntry,
 } from "../txline/client.js";
+import { enrichBundleWithHeadlines } from "./analysis.js";
 import { persistPickBundle } from "./carry-forward.js";
 import type { GenerateResult } from "./generate.js";
 import { buildOddsFallbackBundle, buildMinimalOddsBundle } from "./fallback.js";
@@ -103,6 +104,9 @@ export async function publishDailyCard(
     console.warn("[publish] Bundle build failed:", err);
     return null;
   }
+
+  // Never ship an empty Biggy Breakdown — LLM enrich upgrades this later.
+  bundle = enrichBundleWithHeadlines(bundles, bundle);
 
   const allowedMatches = bundles.map((b) => fixtureLabel(b.fixture));
 

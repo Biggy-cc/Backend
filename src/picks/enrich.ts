@@ -5,7 +5,11 @@ import {
   selectPicksFixtures,
   type TxlineOddsEntry,
 } from "../txline/client.js";
-import { bundleHasThinBreakdowns, enrichBundleWithGeminiAnalysis } from "./analysis.js";
+import {
+  bundleHasThinBreakdowns,
+  enrichBundleWithGeminiAnalysis,
+  enrichBundleWithHeadlines,
+} from "./analysis.js";
 import type { GenerateResult } from "./generate.js";
 import { researchMatches, type EnrichedMatch } from "./research.js";
 import {
@@ -49,6 +53,7 @@ async function loadEnrichBundles(batch: DailyPicksBundle): Promise<MatchBundle[]
 /**
  * Phase 2 — LLM analysis in background (~30–90s).
  * Legs stay locked; only breakdowns and thesis get upgraded.
+ * Falls back to headline-based copy if the LLM chain fails.
  */
 export async function enrichDailyCard(pickDate: string): Promise<GenerateResult | null> {
   const stored = await loadStoredBatch(pickDate);
@@ -74,8 +79,12 @@ export async function enrichDailyCard(pickDate: string): Promise<GenerateResult 
   try {
     enriched = await enrichBundleWithGeminiAnalysis(matchBundles, bundle);
   } catch (err) {
-    console.error("[enrich] LLM analysis failed:", err);
-    return null;
+    console.error("[enrich] LLM analysis failed — using headline fallback:", err);
+    enriched = enrichBundleWithHeadlines(matchBundles, bundle);
+  }
+
+  if (bundleHasThinBreakdowns(enriched)) {
+    enriched = enrichBundleWithHeadlines(matchBundles, enriched);
   }
 
   const version = stored.version + 1;
