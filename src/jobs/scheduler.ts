@@ -1,6 +1,8 @@
 import cron from "node-cron";
 import { getBot } from "../bot/index.js";
 import { runDailyDrop, runRefreshPicks } from "./daily-drop.js";
+import { runNewsBroadcast } from "./news-broadcast.js";
+import { runOddsWatcher } from "./odds-watcher.js";
 import { postNewWins } from "../social/posts.js";
 
 export function startScheduler() {
@@ -39,8 +41,36 @@ export function startScheduler() {
     }
   });
 
+  const oddsWatchSchedule = process.env.ODDS_WATCH_CRON ?? "*/30 * * * *";
+  cron.schedule(oddsWatchSchedule, async () => {
+    const bot = getBot();
+    if (!bot) {
+      console.warn("[odds-watch] Bot not ready — skipping");
+      return;
+    }
+    try {
+      await runOddsWatcher(bot);
+    } catch (err) {
+      console.error("[odds-watch] Failed:", err);
+    }
+  });
+
+  const newsSchedule = process.env.NEWS_CRON ?? "0 7,11,15,19 * * *";
+  cron.schedule(newsSchedule, async () => {
+    const bot = getBot();
+    if (!bot) {
+      console.warn("[news] Bot not ready — skipping");
+      return;
+    }
+    try {
+      await runNewsBroadcast(bot);
+    } catch (err) {
+      console.error("[news] Failed:", err);
+    }
+  });
+
   const socialMode = process.env.SOCIAL_MODE?.trim().toLowerCase() === "auto" ? "auto/X" : "manual/Telegram";
   console.log(
-    `Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC, social wins ${winCheckSchedule} UTC (${socialMode})`
+    `Scheduler: daily ${dailySchedule} UTC, refresh ${refreshSchedule} UTC, odds-watch ${oddsWatchSchedule} UTC, news ${newsSchedule} UTC, social wins ${winCheckSchedule} UTC (${socialMode})`
   );
 }

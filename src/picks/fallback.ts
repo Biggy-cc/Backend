@@ -49,8 +49,57 @@ function allOverGoals(odds: TxlineOddsEntry[]) {
     .sort((a, b) => (a.Line ?? 0) - (b.Line ?? 0));
 }
 
+function hasTotalGoals(odds: TxlineOddsEntry[]) {
+  return odds.some((o) => o.MarketType === "Total Goals");
+}
+
 function drawOdds(odds: TxlineOddsEntry[]) {
   return findOdd(odds, (o) => o.MarketType === "1X2" && o.Selection === "Draw");
+}
+
+/** Favorite Asian Handicap when Total Goals isn't on the feed (common on WC free tier). */
+function favoriteHandicap(fixture: TxlineFixture, odds: TxlineOddsEntry[]) {
+  const fav = favoriteWin(fixture, odds);
+  const favTeam = fav ? parseWinner(fav.Selection) : null;
+  const ahs = odds.filter((o) => {
+    if (o.MarketType !== "Asian Handicap") return false;
+    if (favTeam && o.Participant) {
+      return o.Participant.toLowerCase() === favTeam;
+    }
+    return (o.Line ?? 0) <= 0;
+  });
+  if (!ahs.length) return undefined;
+  const preferred = [-0.25, -0.5, 0, -0.75, -1];
+  for (const line of preferred) {
+    const hit = ahs.find((o) => o.Line === line);
+    if (hit) return hit;
+  }
+  return ahs.reduce((a, b) => (a.StablePrice < b.StablePrice ? a : b));
+}
+
+/** Prefer Over 2.5; fall back to any Over line, then favorite AH. */
+function secondaryMarket(fixture: TxlineFixture, odds: TxlineOddsEntry[]) {
+  return (
+    overGoals(odds, 2.5) ??
+    overGoals(odds, 2.25) ??
+    overGoals(odds, 3.0) ??
+    allOverGoals(odds)[0] ??
+    favoriteHandicap(fixture, odds)
+  );
+}
+
+function isThinOddsBoard(bundles: Bundle[]): boolean {
+  if (!bundles.length) return true;
+  if (bundles.every((b) => !hasTotalGoals(b.odds))) return true;
+  // Free-tier boards often publish Over 1.0 before Over 2.5 — still too thin for classic Hit.
+  return bundles.every(
+    (b) => !overGoals(b.odds, 2.5) && !overGoals(b.odds, 2.25) && !overGoals(b.odds, 2.0)
+  );
+}
+
+/** Best available "favorite" signal — 1X2 first, else favorite-side AH. */
+function favoriteLean(fixture: TxlineFixture, odds: TxlineOddsEntry[]) {
+  return favoriteWin(fixture, odds) ?? favoriteHandicap(fixture, odds);
 }
 
 function leg(match: string, entry: TxlineOddsEntry) {
@@ -59,8 +108,13 @@ function leg(match: string, entry: TxlineOddsEntry) {
 
 function pickBestHitLegs(bundle: Bundle): ReturnType<typeof leg>[] {
   const m = fixtureLabel(bundle.fixture);
+  const thin = isThinOddsBoard([bundle]);
+  const maxCombined = thin ? 2.85 : 2.05;
   const markets = bundle.odds.filter(
-    (o) => o.MarketType === "Total Goals" || o.MarketType === "1X2"
+    (o) =>
+      o.MarketType === "Total Goals" ||
+      o.MarketType === "1X2" ||
+      o.MarketType === "Asian Handicap"
   );
 
   let best: ReturnType<typeof leg>[] | null = null;
@@ -73,7 +127,7 @@ function pickBestHitLegs(bundle: Bundle): ReturnType<typeof leg>[] {
       if (validateLegsCompatible([a, b])) continue;
       if (validateCorrelatedLegs([a, b])) continue;
       const combined = productOdds([a, b]);
-      if (combined > 2.05 || combined < 1.25) continue;
+      if (combined > maxCombined || combined < 1.25) continue;
       const bothOvers =
         a.selection.toLowerCase().startsWith("over") &&
         b.selection.toLowerCase().startsWith("over");
@@ -99,31 +153,48 @@ function pickBestHitLegs(bundle: Bundle): ReturnType<typeof leg>[] {
     return [leg(m, pOver175), leg(m, under)];
   }
 
+  // Thin / partial WC board: single short price is better than no Hit tier.
+  const short =
+    allOverGoals(bundle.odds).find((o) => o.StablePrice <= 2.0) ??
+    favoriteHandicap(bundle.fixture, bundle.odds) ??
+    favoriteWin(bundle.fixture, bundle.odds);
+  if (short && short.StablePrice >= 1.25 && short.StablePrice <= 2.05) {
+    return [leg(m, short)];
+  }
+
   throw new Error("Not enough odds to build Hit fallback");
 }
 
 function pickBestMultiMatchHit(withOdds: Bundle[]): ReturnType<typeof leg>[] {
-  const overs: Array<{ bundle: Bundle; entry: TxlineOddsEntry }> = [];
+  const thin = isThinOddsBoard(withOdds);
+  const maxCombined = thin ? 2.85 : 2.05;
+
+  const candidates: Array<{ bundle: Bundle; entry: TxlineOddsEntry }> = [];
   for (const bundle of withOdds) {
     for (const entry of allOverGoals(bundle.odds)) {
       if (entry.Line != null && entry.Line <= 2.5) {
-        overs.push({ bundle, entry });
+        candidates.push({ bundle, entry });
       }
+    }
+    if (thin) {
+      const lean = favoriteLean(bundle.fixture, bundle.odds);
+      if (lean) candidates.push({ bundle, entry: lean });
     }
   }
 
   let best: ReturnType<typeof leg>[] | null = null;
   let bestScore = Infinity;
 
-  for (let i = 0; i < overs.length; i++) {
-    for (let j = i + 1; j < overs.length; j++) {
-      if (overs[i].bundle.fixture.FixtureId === overs[j].bundle.fixture.FixtureId) {
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      if (candidates[i].bundle.fixture.FixtureId === candidates[j].bundle.fixture.FixtureId) {
         continue;
       }
-      const a = leg(fixtureLabel(overs[i].bundle.fixture), overs[i].entry);
-      const b = leg(fixtureLabel(overs[j].bundle.fixture), overs[j].entry);
+      const a = leg(fixtureLabel(candidates[i].bundle.fixture), candidates[i].entry);
+      const b = leg(fixtureLabel(candidates[j].bundle.fixture), candidates[j].entry);
+      if (validateLegsCompatible([a, b])) continue;
       const combined = productOdds([a, b]);
-      if (combined > 2.05 || combined < 1.25) continue;
+      if (combined > maxCombined || combined < 1.25) continue;
       const score = Math.abs(combined - 1.95);
       if (score < bestScore) {
         bestScore = score;
@@ -133,6 +204,29 @@ function pickBestMultiMatchHit(withOdds: Bundle[]): ReturnType<typeof leg>[] {
   }
 
   if (best) return best;
+
+  // Prefer the shortest single Over / favorite when two-leg Hit can't clear the cap.
+  const shorts = withOdds
+    .map((b) => {
+      const entry =
+        allOverGoals(b.odds).find((o) => o.StablePrice <= 2.0) ??
+        favoriteLean(b.fixture, b.odds);
+      return entry ? { bundle: b, entry } : null;
+    })
+    .filter((x): x is { bundle: Bundle; entry: TxlineOddsEntry } => x != null)
+    .sort((a, b) => a.entry.StablePrice - b.entry.StablePrice);
+
+  if (shorts.length >= 2) {
+    const a = leg(fixtureLabel(shorts[0].bundle.fixture), shorts[0].entry);
+    const b = leg(fixtureLabel(shorts[1].bundle.fixture), shorts[1].entry);
+    if (!validateLegsCompatible([a, b]) && productOdds([a, b]) <= 3.2) {
+      return [a, b];
+    }
+  }
+  if (shorts[0] && shorts[0].entry.StablePrice <= 2.05) {
+    return [leg(fixtureLabel(shorts[0].bundle.fixture), shorts[0].entry)];
+  }
+
   throw new Error("No valid multi-match hit");
 }
 
@@ -166,6 +260,10 @@ function collectGoBigCandidates(
     if (o.Line != null && o.Line >= 1.5 && o.Line <= 3.5) {
       candidates.push(leg(m, o));
     }
+  }
+  for (const o of bundle.odds.filter((x) => x.MarketType === "Asian Handicap")) {
+    // Skip heavily chalked favorite handicaps for Go Big variety
+    if ((o.StablePrice ?? 0) >= 1.45) candidates.push(leg(m, o));
   }
   if (draw) candidates.push(leg(m, draw));
 
@@ -245,6 +343,22 @@ function pickBestGoBigLegs(
           }
         }
       }
+      // Thin board: 2-leg cross-match when 3-leg can't clear 9.5
+      for (const a of pools[i]) {
+        for (const b of pools[j]) {
+          const legs = [a, b];
+          if (validateDuplicateLegs(legs)) continue;
+          if (validateLegsCompatible(legs)) continue;
+          if (validateCorrelatedLegs(legs, "go_big")) continue;
+          const combined = productOdds(legs);
+          if (combined < 9.5 || combined > 115) continue;
+          const s = scoreCombo(legs);
+          if (s < bestScore) {
+            bestScore = s;
+            best = legs;
+          }
+        }
+      }
     }
   }
 
@@ -291,22 +405,46 @@ function pickPrimaryBundle(withOdds: Bundle[]): Bundle {
 
 function buildSingleMatchFallback(bundle: Bundle): DailyPicksBundle {
   const m = fixtureLabel(bundle.fixture);
-  const pWin = favoriteWin(bundle.fixture, bundle.odds);
-  const pOver25 = overGoals(bundle.odds, 2.5) ?? overGoals(bundle.odds, 2.25);
-  console.log("[fallback-debug] buildSingleMatchFallback for:", m, "pWin:", pWin?.Selection, "pOver25:", pOver25?.Selection, "raw odds:", JSON.stringify(bundle.odds));
+  const pWin = favoriteLean(bundle.fixture, bundle.odds);
+  const pSecond =
+    secondaryMarket(bundle.fixture, bundle.odds) ??
+    underdogWin(bundle.fixture, bundle.odds) ??
+    drawOdds(bundle.odds);
 
-  if (!pWin || !pOver25) {
+  if (!pWin) {
     throw new Error("Not enough odds to build fallback picks");
   }
 
   const hitLegs = pickBestHitLegs(bundle);
 
-  const aimLegs = [leg(m, pWin), leg(m, pOver25)];
+  let aimLegs: ReturnType<typeof leg>[];
+  if (pSecond && pWin.Selection !== pSecond.Selection) {
+    aimLegs = [leg(m, pWin), leg(m, pSecond)];
+    if (validateLegsCompatible(aimLegs) || validateCorrelatedLegs(aimLegs, "aim")) {
+      aimLegs = [leg(m, pWin)];
+    }
+  } else {
+    aimLegs = [leg(m, pWin)];
+  }
+
   let goBigLegs: ReturnType<typeof leg>[];
   try {
     goBigLegs = pickBestGoBigLegs([bundle]);
   } catch {
-    goBigLegs = pickBestGoBigPair(bundle);
+    try {
+      goBigLegs = pickBestGoBigPair(bundle);
+    } catch {
+      // Last resort on extremely thin single-match boards
+      const dog = underdogWin(bundle.fixture, bundle.odds);
+      const draw = drawOdds(bundle.odds);
+      const extras = [pSecond, dog, draw].filter(
+        (e): e is TxlineOddsEntry => Boolean(e) && e!.Selection !== pWin.Selection
+      );
+      if (!extras.length) {
+        throw new Error("Not enough odds to build fallback picks");
+      }
+      goBigLegs = [leg(m, pWin), leg(m, extras[0])];
+    }
   }
 
   const thesis = [
@@ -500,12 +638,29 @@ export function buildMinimalOddsBundle(bundles: Bundle[]): DailyPicksBundle | nu
   const withOdds = bundles.filter((b) => b.odds.length > 0);
   if (!withOdds.length) return null;
 
+  const thin = isThinOddsBoard(withOdds);
   const pools = withOdds.map(collectCandidateLegs).filter((p) => p.length > 0);
   if (!pools.length) return null;
 
-  const hitLegs = findTierCombo(pools, 2, 2, 1.3, 2.05, "hit");
-  const aimLegs = findTierCombo(pools, 2, 3, 3.0, 10.0, "aim");
-  const goBigLegs = findTierCombo(pools, 3, 4, 10.0, 120.0, "go_big");
+  const hitMax = thin ? 2.85 : 2.05;
+  // Prefer a single short Hit when two-leg products can't stay under 2.0 (common without totals).
+  let hitLegs = thin
+    ? findTierCombo(pools, 1, 1, 1.3, 2.0, "hit")
+    : null;
+  if (!hitLegs) {
+    hitLegs = findTierCombo(pools, 2, 2, 1.3, hitMax, "hit");
+  }
+  if (!hitLegs && thin) {
+    hitLegs = findTierCombo(pools, 1, 1, 1.3, 2.05, "hit");
+  }
+  let aimLegs = findTierCombo(pools, 2, 3, 3.0, 10.0, "aim");
+  if (!aimLegs && thin) {
+    aimLegs = findTierCombo(pools, 1, 2, 1.5, 10.0, "aim");
+  }
+  let goBigLegs = findTierCombo(pools, 3, 4, 10.0, 120.0, "go_big");
+  if (!goBigLegs) {
+    goBigLegs = findTierCombo(pools, 2, 2, 9.5, 120.0, "go_big");
+  }
 
   if (!hitLegs || !aimLegs || !goBigLegs) return null;
 
@@ -529,7 +684,6 @@ export function buildMinimalOddsBundle(bundles: Bundle[]): DailyPicksBundle | nu
 
 export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   const withOdds = bundles.filter((b) => b.odds.length > 0);
-  console.log("[fallback-debug] withOdds count:", withOdds.length, "fixtures:", withOdds.map(b => `${fixtureLabel(b.fixture)} (odds: ${b.odds.length})`));
   if (withOdds.length === 0) {
     throw new Error("Not enough odds to build fallback picks");
   }
@@ -544,15 +698,15 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   const primary = pickPrimaryBundle(withOdds);
   const m1 = fixtureLabel(primary.fixture);
 
-  const pOver25 = overGoals(primary.odds, 2.5) ?? overGoals(primary.odds, 2.25);
-  const pWin = favoriteWin(primary.fixture, primary.odds);
+  const pSecond = secondaryMarket(primary.fixture, primary.odds);
+  const pWin = favoriteLean(primary.fixture, primary.odds);
 
   const secondary = withOdds.find((b) => b.fixture.FixtureId !== primary.fixture.FixtureId);
   if (!secondary) {
     return buildSingleMatchFallback(primary);
   }
 
-  if (!pWin || !pOver25) {
+  if (!pWin) {
     return buildSingleMatchFallback(primary);
   }
 
@@ -562,13 +716,36 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   } catch {
     hitLegs = pickBestHitLegs(primary);
   }
-  const aimLegs = [leg(m1, pWin), leg(m1, pOver25)];
+
+  const secondaryWin = favoriteLean(secondary.fixture, secondary.odds);
+  let aimLegs: ReturnType<typeof leg>[];
+  if (isThinOddsBoard(withOdds) && secondaryWin) {
+    // Thin / partial feed — Aim stacks the best lean from each priced fixture.
+    aimLegs = [leg(m1, pWin), leg(fixtureLabel(secondary.fixture), secondaryWin)];
+  } else if (pSecond) {
+    aimLegs = [leg(m1, pWin), leg(m1, pSecond)];
+    if (validateLegsCompatible(aimLegs) || validateCorrelatedLegs(aimLegs, "aim")) {
+      aimLegs = secondaryWin
+        ? [leg(m1, pWin), leg(fixtureLabel(secondary.fixture), secondaryWin)]
+        : [leg(m1, pWin)];
+    }
+  } else if (secondaryWin) {
+    aimLegs = [leg(m1, pWin), leg(fixtureLabel(secondary.fixture), secondaryWin)];
+  } else {
+    aimLegs = [leg(m1, pWin)];
+  }
+
   const winnerLeanByMatch = new Map<string, string>();
   for (const l of aimLegs) {
-    const w = parseWinner(l.selection);
+    const w = parseWinner(l.selection) ?? parseAsianHandicapTeamFromSel(l.selection);
     if (w) winnerLeanByMatch.set(l.match, w);
   }
-  const goBigLegs = pickBestGoBigLegs(withOdds, winnerLeanByMatch);
+  let goBigLegs: ReturnType<typeof leg>[];
+  try {
+    goBigLegs = pickBestGoBigLegs(withOdds, winnerLeanByMatch);
+  } catch {
+    return buildSingleMatchFallback(primary);
+  }
 
   const hit = {
     legs: hitLegs,
@@ -579,8 +756,9 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
   const aim = {
     legs: aimLegs,
     combinedOdds: productOdds(aimLegs),
-    breakdown:
-      "Same-game value on the next kickoff: favorite to win paired with goals over the main total line.",
+    breakdown: hasTotalGoals(primary.odds)
+      ? "Same-game value on the next kickoff: favorite to win paired with goals over the main total line."
+      : "Both semis priced — favorites stacked from live 1X2 / AH lines (full totals not on the free feed yet).",
   };
   const goBig = {
     legs: goBigLegs,
@@ -594,14 +772,19 @@ export function buildOddsFallbackBundle(bundles: Bundle[]): DailyPicksBundle {
       summary: `Next bettable match. ${fixtureLabel(b.fixture)}`,
       winnerLean:
         b.fixture.FixtureId === primary.fixture.FixtureId
-          ? pWin.Selection.replace(/\s+to\s+win$/i, "").trim()
-          : favoriteWin(b.fixture, b.odds)?.Selection.replace(/\s+to\s+win$/i, "").trim() ??
+          ? pWin.Selection.replace(/\s+to\s+win$/i, "").replace(/\s+[+-]?\d+(?:\.\d+)?\s*AH$/i, "").trim()
+          : favoriteLean(b.fixture, b.odds)?.Selection.replace(/\s+to\s+win$/i, "").replace(/\s+[+-]?\d+(?:\.\d+)?\s*AH$/i, "").trim() ??
             b.fixture.Participant1,
       goalsLean: "medium" as const,
       bttsLean: "neutral" as const,
     })),
     picks: { hit, aim, go_big: goBig },
   };
+}
+
+function parseAsianHandicapTeamFromSel(selection: string): string | null {
+  const m = selection.match(/^(.+?)\s+[+-]?\d+(?:\.\d+)?\s*AH$/i);
+  return m ? m[1].trim().toLowerCase() : null;
 }
 
 export { isQuotaError as isGeminiQuotaError } from "./llm.js";

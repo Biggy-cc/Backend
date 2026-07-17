@@ -5,28 +5,9 @@ import { todayPickDate } from "../picks/generate.js";
 import { picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
 import { loadStoredBatch } from "../picks/store.js";
 import { refreshStoredOdds } from "../picks/odds-refresh.js";
-import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
-import { listActiveUserIds } from "../db/users.js";
+import { DAILY_DROP_TEXT } from "../bot/keyboards.js";
+import { broadcastToActiveUsers } from "../bot/broadcast.js";
 import { postDailyFreePick, postPickUpdate, postNewWins } from "../social/posts.js";
-
-async function broadcastToActiveUsers(
-  bot: Bot,
-  text: string,
-  options: { parseMode?: "HTML" } = {}
-): Promise<number> {
-  const userIds = await listActiveUserIds();
-  for (const telegramId of userIds) {
-    try {
-      await bot.api.sendMessage(telegramId, text, {
-        parse_mode: options.parseMode,
-        reply_markup: dailyMenuKeyboard(),
-      });
-    } catch (err) {
-      console.warn(`[cron] Could not message ${telegramId}:`, err);
-    }
-  }
-  return userIds.length;
-}
 
 async function restDayNotice(): Promise<string> {
   const next = await upcomingBettableSummary(3);
@@ -51,16 +32,7 @@ export async function runRefreshPicks(bot: Bot) {
       void enrichDailyCard(pickDate).catch((err) =>
         console.error("[refresh] Background enrich failed:", err)
       );
-      const userIds = await listActiveUserIds();
-      for (const telegramId of userIds) {
-        try {
-          await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
-            reply_markup: dailyMenuKeyboard(),
-          });
-        } catch (err) {
-          console.warn(`[refresh] Could not notify ${telegramId}:`, err);
-        }
-      }
+      await broadcastToActiveUsers(bot, DAILY_DROP_TEXT);
       return;
     }
   }
@@ -90,7 +62,6 @@ export async function runRefreshPicks(bot: Bot) {
       return;
     }
 
-    const userIds = await listActiveUserIds();
     const notice =
       result.refreshKind === "odds"
         ? `📋 <b>Updated (v${result.version})</b>\n\n${result.changeNote ?? "Lines moved on today's card."}\n\nTap a tier for the latest slip:`
@@ -98,18 +69,8 @@ export async function runRefreshPicks(bot: Bot) {
           ? `⏱️ <b>Fixtures kicked off. Fresh football card (v${result.version})</b>\n\n${result.changeNote ?? "Picks updated with the next upcoming matches."}\n\nTap a tier for the latest slip:`
           : `📋 <b>Biggy football update (v${result.version})</b>\n\n${result.changeNote ?? "Today's football picks are refreshed."}\n\nTap a tier for the latest slip:`;
 
-    console.log(`[refresh] Broadcasting v${result.version} to ${userIds.length} users`);
-
-    for (const telegramId of userIds) {
-      try {
-        await bot.api.sendMessage(telegramId, notice, {
-          parse_mode: "HTML",
-          reply_markup: dailyMenuKeyboard(),
-        });
-      } catch (err) {
-        console.warn(`[refresh] Could not notify ${telegramId}:`, err);
-      }
-    }
+    const count = await broadcastToActiveUsers(bot, notice, { parseMode: "HTML" });
+    console.log(`[refresh] Broadcasting v${result.version} to ${count} users`);
 
     if (result.changeNote) {
       void postPickUpdate(pickDate, result.version, result.changeNote, bot).catch((err) =>

@@ -96,7 +96,14 @@ export async function publishDailyCard(
     return null;
   }
 
-  const bundle = normalizePickBundle(buildPublishBundle(bundles));
+  let bundle: DailyPicksBundle;
+  try {
+    bundle = normalizePickBundle(buildPublishBundle(bundles));
+  } catch (err) {
+    console.warn("[publish] Bundle build failed:", err);
+    return null;
+  }
+
   const allowedMatches = bundles.map((b) => fixtureLabel(b.fixture));
 
   const errors = validateDailyBundle(bundle, {
@@ -123,4 +130,28 @@ export async function publishDailyCard(
 
 export async function hasPublishedCard(pickDate: string): Promise<boolean> {
   return (await cachedPicks(pickDate)) != null;
+}
+
+/** Upcoming WC fixtures that currently have TxLINE odds. */
+export async function fixturesWithLiveOdds(): Promise<string[]> {
+  const bundles = await loadPublishBundles();
+  return bundles.map((b) => fixtureLabel(b.fixture));
+}
+
+/** True when today's stored card already includes every priced upcoming fixture. */
+export async function cardCoversAvailableOdds(pickDate: string): Promise<boolean> {
+  const available = await fixturesWithLiveOdds();
+  if (!available.length) return true;
+
+  const stored = await loadStoredBatch(pickDate);
+  if (!stored) return false;
+
+  const onCard = new Set<string>();
+  for (const tier of TIERS) {
+    for (const leg of stored.picks[tier].legs) {
+      onCard.add(leg.match);
+    }
+  }
+
+  return available.every((match) => onCard.has(match));
 }

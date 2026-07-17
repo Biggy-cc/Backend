@@ -56,6 +56,11 @@ export function parseWinner(selection: string): string | null {
   return null;
 }
 
+function parseAsianHandicapTeam(selection: string): string | null {
+  const m = selection.match(/^(.+?)\s+[+-]?\d+(?:\.\d+)?\s*AH$/i);
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
 /** Same match cannot back different outright winners across tiers. */
 export function validateCrossTierWinners(bundle: DailyPicksBundle): string | null {
   const winnersByMatch = new Map<string, Set<string>>();
@@ -107,6 +112,18 @@ export function legsConflictOnMatch(a: Leg, b: Leg): string | null {
   const winB = parseWinner(b.selection);
   if (winA && winB && winA !== winB) {
     return `Conflicting winners on ${a.match}`;
+  }
+
+  const ahA = parseAsianHandicapTeam(a.selection);
+  const ahB = parseAsianHandicapTeam(b.selection);
+  if (winA && ahB && winA !== ahB) {
+    return `Conflicting winner vs handicap on ${a.match}`;
+  }
+  if (winB && ahA && winB !== ahA) {
+    return `Conflicting winner vs handicap on ${a.match}`;
+  }
+  if (ahA && ahB && ahA !== ahB) {
+    return `Conflicting handicaps on ${a.match}`;
   }
 
   const bttsA = parseBtts(a.selection);
@@ -220,13 +237,17 @@ export function normalizePickBundle(bundle: DailyPicksBundle): DailyPicksBundle 
 
 export function validatePick(
   pick: Omit<GeneratedPick, "tier" | "sources">,
-  tier: PickTier
+  tier: PickTier,
+  options?: { oddsFallback?: boolean }
 ): string | null {
   const target = TIER_TARGETS[tier];
-  const cap = TIER_LIMITS[tier];
+  const thinHit = Boolean(options?.oddsFallback && tier === "hit");
+  const thinAim = Boolean(options?.oddsFallback && tier === "aim");
+  const cap = thinHit ? Math.max(TIER_LIMITS[tier], 2.85) : TIER_LIMITS[tier];
+  const minLegs = thinHit || thinAim ? 1 : 2;
 
-  if (pick.legs.length < 2 || pick.legs.length > 4) {
-    return `${tier}: need 2–4 legs, got ${pick.legs.length}`;
+  if (pick.legs.length < minLegs || pick.legs.length > 4) {
+    return `${tier}: need ${minLegs}–4 legs, got ${pick.legs.length}`;
   }
 
   const legConflict = validateLegsCompatible(pick.legs);
@@ -300,7 +321,7 @@ export function validateDailyBundle(
       errors.push(`${tier}: missing`);
       continue;
     }
-    const err = validatePick(pick, tier);
+    const err = validatePick(pick, tier, { oddsFallback: options?.oddsFallback });
     if (err) {
       if (options?.oddsFallback && err.includes("below tier minimum")) {
         continue;
