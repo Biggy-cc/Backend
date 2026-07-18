@@ -45,12 +45,12 @@ ${tierLabel} tier · Track record on ${SITE_LINK}
 Get tomorrow's picks → ${BOT_LINK}`;
 }
 
-export function formatNewsHook(match: string, headline: string): string {
-  const trimmed = headline.length > 100 ? `${headline.slice(0, 97)}…` : headline;
+export function formatNewsHook(match: string, summary: string): string {
+  const trimmed =
+    summary.length > 320 ? `${summary.slice(0, 317)}…` : summary.trim();
   return `${formatMatchWithFlags(match)}
 
 ${trimmed}
 
-${worldCupOddsLine()}
-Biggy already priced this into today's card → ${BOT_LINK}`;
+Already on today's card → ${BOT_LINK}`;
 }

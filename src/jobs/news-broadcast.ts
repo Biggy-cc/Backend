@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import { broadcastToActiveUsers } from "../bot/broadcast.js";
-import { fetchMatchNews } from "../news/google.js";
+import { articleMatchesFixture, fetchMatchNews } from "../news/google.js";
+import { summarizeMatchNews } from "../news/summarize.js";
 import { todayPickDate } from "../picks/generate.js";
 import { formatNewsHook } from "../social/copy.js";
 import { isSocialAutoMode, sendManualSocialDraft } from "../social/notify.js";
@@ -37,15 +38,14 @@ function upcomingWorldCupFixtures(hoursAhead = 72) {
 async function dispatchNews(
   bot: Bot,
   match: string,
-  headline: string,
-  url: string
+  summary: string,
+  dedupKey: string
 ): Promise<boolean> {
-  const dedupKey = `news:user:${todayPickDate()}:${match.toLowerCase()}:${url}`;
   if (await wasPosted(dedupKey)) return false;
 
-  const text = formatNewsHook(match, headline);
+  const text = formatNewsHook(match, summary);
   const userCount = await broadcastToActiveUsers(bot, text);
-  console.log(`[news] Sent to ${userCount} users: ${match} — ${headline.slice(0, 60)}`);
+  console.log(`[news] Sent to ${userCount} users: ${match} — ${summary.slice(0, 80)}`);
 
   if (isSocialAutoMode() && isXConfigured()) {
     const tweetId = await postTweet(text);
@@ -58,7 +58,10 @@ async function dispatchNews(
   return true;
 }
 
-/** World Cup team news → Telegram users (+ X draft/auto). Match-scoped RSS, deduped. */
+/**
+ * World Cup team news → Telegram users (+ X draft/auto).
+ * One summarized blurb per match (not raw headlines / outlet names).
+ */
 export async function runNewsBroadcast(bot: Bot): Promise<void> {
   const fixtures = await upcomingWorldCupFixtures();
   if (!fixtures.length) {
@@ -70,22 +73,27 @@ export async function runNewsBroadcast(bot: Bot): Promise<void> {
 
   for (const fixture of fixtures) {
     const match = fixtureLabel(fixture);
-    const articles = await fetchMatchNews(
-      fixture.Participant1,
-      fixture.Participant2,
-      8
+    const articles = (
+      await fetchMatchNews(fixture.Participant1, fixture.Participant2, 8)
+    ).filter((a) =>
+      articleMatchesFixture(a, fixture.Participant1, fixture.Participant2)
     );
 
-    const important = articles.filter((a) => IMPORTANT_HEADLINE.test(a.title));
-    const pool = important.length > 0 ? important : articles.slice(0, 1);
+    if (!articles.length) continue;
 
-    for (const article of pool.slice(0, 2)) {
-      const ok = await dispatchNews(bot, match, article.title, article.url);
-      if (ok) sent++;
-    }
+    const important = articles.filter((a) => IMPORTANT_HEADLINE.test(a.title));
+    const pool = important.length > 0 ? important : articles.slice(0, 3);
+
+    // One digest per match per day — not a headline spam drip
+    const dedupKey = `news:user:${todayPickDate()}:${match.toLowerCase()}:digest`;
+    if (await wasPosted(dedupKey)) continue;
+
+    const summary = await summarizeMatchNews(match, pool);
+    const ok = await dispatchNews(bot, match, summary, dedupKey);
+    if (ok) sent++;
   }
 
   if (sent > 0) {
-    console.log(`[news] Dispatched ${sent} headline(s) for WC window`);
+    console.log(`[news] Dispatched ${sent} match summary(ies) for WC window`);
   }
 }
