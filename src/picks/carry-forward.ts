@@ -90,63 +90,87 @@ export async function tryCarryForwardPicks(
   return saveCarriedBatch(pickDate, servable.batch, changeNote);
 }
 
-/** Copy bettable legs from the latest stored batch when the full card has started matches. */
+/** Copy bettable legs from a recent stored batch when the full card has started matches. */
 export async function tryPrunedCarryForward(
   pickDate: string
 ): Promise<GenerateResult | null> {
   if (await loadStoredBatch(pickDate)) return null;
 
   const dates = await dbAll<{ pick_date: string }>(
-    `SELECT DISTINCT pick_date FROM daily_pick_batches ORDER BY pick_date DESC LIMIT 1`
+    `SELECT DISTINCT pick_date FROM daily_pick_batches ORDER BY pick_date DESC LIMIT 8`
   );
   if (dates.length === 0) return null;
 
-  const sourceDate = dates[0].pick_date;
-  if (sourceDate === pickDate) return null;
+  for (const { pick_date: sourceDate } of dates) {
+    if (sourceDate === pickDate) continue;
 
-  const batch = await loadStoredBatch(sourceDate);
-  if (!batch) return null;
+    const batch = await loadStoredBatch(sourceDate);
+    if (!batch) continue;
 
-  const prunedPicks: DailyPicksBundle["picks"] = {
-    hit: { legs: [], combinedOdds: 0, breakdown: "" },
-    aim: { legs: [], combinedOdds: 0, breakdown: "" },
-    go_big: { legs: [], combinedOdds: 0, breakdown: "" },
-  };
-
-  const usedMatches = new Set<string>();
-
-  for (const tier of TIERS) {
-    const bettable = await filterBettableLegs(batch.picks[tier].legs);
-    if (bettable.length === 0) return null;
-    prunedPicks[tier] = {
-      legs: bettable,
-      combinedOdds: productOdds(bettable),
-      breakdown: batch.picks[tier].breakdown,
+    const prunedPicks: DailyPicksBundle["picks"] = {
+      hit: { legs: [], combinedOdds: 0, breakdown: "" },
+      aim: { legs: [], combinedOdds: 0, breakdown: "" },
+      go_big: { legs: [], combinedOdds: 0, breakdown: "" },
     };
-    for (const leg of bettable) usedMatches.add(leg.match);
+
+    const usedMatches = new Set<string>();
+    let everyTierHasLegs = true;
+
+    for (const tier of TIERS) {
+      const bettable = await filterBettableLegs(batch.picks[tier].legs);
+      if (bettable.length === 0) {
+        everyTierHasLegs = false;
+        break;
+      }
+      prunedPicks[tier] = {
+        legs: bettable,
+        combinedOdds: productOdds(bettable),
+        breakdown: batch.picks[tier].breakdown,
+      };
+      for (const leg of bettable) usedMatches.add(leg.match);
+    }
+
+    if (!everyTierHasLegs || usedMatches.size === 0) {
+      console.log(
+        `[picks] Skip pruned carry ${sourceDate} — no bettable legs left on every tier`
+      );
+      continue;
+    }
+
+    const prunedThesis = batch.thesis.filter((t) => usedMatches.has(t.match));
+    const bundle: DailyPicksBundle = {
+      dailyThesis: prunedThesis.length
+        ? prunedThesis
+        : [...usedMatches].map((match) => ({
+            match,
+            summary: `Carried-forward pre-match focus on ${match}`,
+            winnerLean: match.split(" vs ")[0]?.trim() ?? match,
+            goalsLean: "medium" as const,
+            bttsLean: "neutral" as const,
+          })),
+      picks: prunedPicks,
+    };
+
+    const err = await validateBundleBettable(bundle);
+    if (err) {
+      console.log(
+        `[picks] Pruned carry-forward from ${sourceDate} not bettable: ${err}`
+      );
+      continue;
+    }
+
+    const changeNote =
+      "Today's card — bettable legs carried forward; started matches removed.";
+    console.log(`[picks] Pruned carry-forward ${sourceDate} → ${pickDate}`);
+
+    return persistPickBundle(pickDate, bundle, {
+      version: 1,
+      changeNote,
+      thesis: bundle.dailyThesis,
+    });
   }
 
-  const prunedThesis = batch.thesis.filter((t) => usedMatches.has(t.match));
-  const bundle: DailyPicksBundle = {
-    dailyThesis: prunedThesis,
-    picks: prunedPicks,
-  };
-
-  const err = await validateBundleBettable(bundle);
-  if (err) {
-    console.log(`[picks] Pruned carry-forward from ${sourceDate} not bettable: ${err}`);
-    return null;
-  }
-
-  const changeNote =
-    "Today's card — bettable legs carried forward; started matches removed.";
-  console.log(`[picks] Pruned carry-forward ${sourceDate} → ${pickDate}`);
-
-  return persistPickBundle(pickDate, bundle, {
-    version: 1,
-    changeNote,
-    thesis: prunedThesis,
-  });
+  return null;
 }
 
 /** Ensure today's stored batch is bettable; re-save under today if only an older date has legs. */

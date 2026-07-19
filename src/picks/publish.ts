@@ -7,7 +7,11 @@ import {
   type TxlineOddsEntry,
 } from "../txline/client.js";
 import { enrichBundleWithHeadlines } from "./analysis.js";
-import { persistPickBundle } from "./carry-forward.js";
+import {
+  persistPickBundle,
+  tryCarryForwardPicks,
+  tryPrunedCarryForward,
+} from "./carry-forward.js";
 import type { GenerateResult } from "./generate.js";
 import { buildOddsFallbackBundle, buildMinimalOddsBundle } from "./fallback.js";
 import { validateBundleBettable } from "./kickoff.js";
@@ -19,6 +23,23 @@ import {
   validateDailyBundle,
   type DailyPicksBundle,
 } from "./validate.js";
+
+/** When live odds are thin/missing, reuse the last bettable stored card. */
+async function publishFromCarryForward(
+  pickDate: string
+): Promise<GenerateResult | null> {
+  const full = await tryCarryForwardPicks(pickDate);
+  if (full) {
+    console.log(`[publish] Carried full card onto ${pickDate}`);
+    return full;
+  }
+  const pruned = await tryPrunedCarryForward(pickDate);
+  if (pruned) {
+    console.log(`[publish] Carried pruned card onto ${pickDate}`);
+    return pruned;
+  }
+  return null;
+}
 
 type MatchBundle = EnrichedMatch & { odds: TxlineOddsEntry[] };
 
@@ -93,16 +114,16 @@ export async function publishDailyCard(
   await runMigrations();
   const bundles = await loadPublishBundles();
   if (!bundles.length) {
-    console.log("[publish] No fixtures with odds");
-    return null;
+    console.log("[publish] No fixtures with odds — trying carry-forward");
+    return publishFromCarryForward(pickDate);
   }
 
   let bundle: DailyPicksBundle;
   try {
     bundle = normalizePickBundle(buildPublishBundle(bundles));
   } catch (err) {
-    console.warn("[publish] Bundle build failed:", err);
-    return null;
+    console.warn("[publish] Bundle build failed — trying carry-forward:", err);
+    return publishFromCarryForward(pickDate);
   }
 
   // Never ship an empty Biggy Breakdown — LLM enrich upgrades this later.
@@ -116,14 +137,17 @@ export async function publishDailyCard(
     oddsFallback: true,
   });
   if (errors.length > 0) {
-    console.warn("[publish] Validation failed:", errors.join("; "));
-    return null;
+    console.warn(
+      "[publish] Validation failed — trying carry-forward:",
+      errors.join("; ")
+    );
+    return publishFromCarryForward(pickDate);
   }
 
   const bettableErr = await validateBundleBettable(bundle);
   if (bettableErr) {
-    console.warn("[publish] Not bettable:", bettableErr);
-    return null;
+    console.warn("[publish] Not bettable — trying carry-forward:", bettableErr);
+    return publishFromCarryForward(pickDate);
   }
 
   const changeNote = "Today's card — live TxLINE lines.";

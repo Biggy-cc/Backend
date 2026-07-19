@@ -11,13 +11,13 @@ import { postDailyFreePick, postPickUpdate, postNewWins } from "../social/posts.
 
 async function restDayNotice(): Promise<string> {
   const next = await upcomingBettableSummary(3);
-  return `⚽ <b>No matches on today's card</b>
+  return `⚽ <b>Lines aren't on the feed yet</b>
 
-Nothing to price in the current World Cup window.
+There's a World Cup kickoff coming up, but TxLINE hasn't posted (or has pulled) priced markets for today's card.
 
 Next up: ${next}.
 
-We'll message you when the next slip is ready.`;
+We'll message you as soon as a slip is ready.`;
 }
 
 export async function runRefreshPicks(bot: Bot) {

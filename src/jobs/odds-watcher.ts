@@ -18,13 +18,25 @@ import { postDailyFreePick } from "../social/posts.js";
 export async function runOddsWatcher(bot: Bot): Promise<void> {
   const pickDate = todayPickDate();
   const priced = await fixturesWithLiveOdds();
+  const hasCard = await hasPublishedCard(pickDate);
 
+  // Live odds missing (common near kickoff on free tier) — still try carry-forward.
   if (!priced.length) {
-    console.log("[odds-watch] No priced upcoming fixtures");
+    if (hasCard) {
+      console.log("[odds-watch] No priced fixtures; card already present");
+      return;
+    }
+    console.log("[odds-watch] No priced fixtures — trying carry-forward publish");
+    const carried = await publishDailyCard(pickDate);
+    if (!carried) {
+      console.log("[odds-watch] Carry-forward unavailable");
+      return;
+    }
+    const count = await broadcastToActiveUsers(bot, DAILY_DROP_TEXT);
+    console.log(`[odds-watch] Broadcast carried card to ${count} users`);
     return;
   }
 
-  const hasCard = await hasPublishedCard(pickDate);
   const coversAll = hasCard && (await cardCoversAvailableOdds(pickDate));
 
   if (coversAll) {
