@@ -89,7 +89,30 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
     upcoming.map((f) => fixtureLabel(f)).join(", ")
   );
 
-  const enriched = await researchMatchesLight(upcoming);
+  let enriched;
+  try {
+    enriched = await Promise.race([
+      researchMatchesLight(upcoming),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("headline research timeout")), 20_000)
+      ),
+    ]);
+  } catch (err) {
+    console.warn("[publish] Headline research skipped:", err);
+    enriched = upcoming.map((fixture) => ({
+      fixture,
+      research: {
+        match: fixtureLabel(fixture),
+        injuriesAndSuspensions: [] as string[],
+        headToHead: "See live lines",
+        recentForm: [] as Array<{ team: string; lastFive: string }>,
+        keyNews: [] as string[],
+        bettingAngle: "Pre-match lines on upcoming kickoff",
+      },
+      newsArticles: [],
+      sources: [],
+    }));
+  }
 
   const bundles = await Promise.all(
     enriched.map(async (match) => {

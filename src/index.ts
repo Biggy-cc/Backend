@@ -25,17 +25,7 @@ async function main() {
     console.error("[db] Migration failed — API may have limited data:", err);
   }
 
-  startScheduler();
-
-  // Heavy publish/odds warm — don't block local FE testing
-  if (process.env.SKIP_STARTUP_PICKS?.trim() === "1") {
-    console.log("[picks] SKIP_STARTUP_PICKS=1 — skipping startup warm-up");
-  } else {
-    void ensurePicksForToday()
-      .then(() => console.log("[picks] Startup warm-up done"))
-      .catch((err) => console.error("[picks] Startup warm-up failed:", err));
-  }
-
+  // API first so /api/health + /api/fixtures stay up even if pick warm hangs
   const apiPort = Number(process.env.PORT ?? process.env.FIXTURES_API_PORT ?? 8787);
   if (Number.isFinite(apiPort) && apiPort > 0) {
     startApiServer(apiPort);
@@ -43,8 +33,19 @@ async function main() {
     console.error("[api] Invalid PORT — API not started");
   }
 
-  // Bot runs in the background; failures are logged, not fatal.
+  startScheduler();
   void startBot();
+
+  if (process.env.SKIP_STARTUP_PICKS?.trim() === "1") {
+    console.log("[picks] SKIP_STARTUP_PICKS=1 — skipping startup warm-up");
+  } else {
+    // Defer so health checks pass Railway before any API-Football work
+    setTimeout(() => {
+      void ensurePicksForToday()
+        .then(() => console.log("[picks] Startup warm-up done"))
+        .catch((err) => console.error("[picks] Startup warm-up failed:", err));
+    }, 5_000);
+  }
 }
 
 main().catch((err) => {

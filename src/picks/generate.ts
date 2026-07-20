@@ -241,8 +241,13 @@ export async function ensureFastCard(pickDate: string): Promise<boolean> {
 /** Cron/startup: publish fast, enrich LLM in background. */
 export async function ensurePicksForToday(): Promise<void> {
   const pickDate = todayPickDate();
-  const published = await publishDailyCard(pickDate);
-  if (published?.updated ?? published) {
+  // If a bettable card already exists, do not burn API-Football quota on boot
+  const existing = await publishDailyCard(pickDate);
+  if (existing && !existing.updated) {
+    console.log(`[picks] Startup: card already present for ${pickDate}`);
+    return;
+  }
+  if (existing?.updated) {
     void enrichDailyCard(pickDate).catch((err) =>
       console.error("[picks] Background enrich failed:", err)
     );

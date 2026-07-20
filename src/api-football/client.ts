@@ -8,6 +8,7 @@ import {
   recordApiFootballCall,
   setCachedFixtures,
   setCachedOdds,
+  setCachedOddsBatch,
   wasOddsDateFetched,
 } from "./cache.js";
 import {
@@ -227,6 +228,8 @@ function ingestOddsRows(
   fixtureById: Map<number, TxlineFixture>
 ): Set<number> {
   const priced = new Set<number>();
+  const batch: Array<{ fixtureId: number; data: import("../txline/client.js").TxlineOddsEntry[] }> =
+    [];
   for (const row of rows ?? []) {
     const id = row.fixture?.id;
     if (id == null) continue;
@@ -234,13 +237,14 @@ function ingestOddsRows(
     if (!fixture) continue;
     const book = pickBookmaker(row.bookmakers ?? []);
     if (!book) {
-      setCachedOdds(id, []);
+      batch.push({ fixtureId: id, data: [] });
       continue;
     }
     const odds = normalizeAllBookmakerOdds(fixture, book);
-    setCachedOdds(id, odds);
+    batch.push({ fixtureId: id, data: odds });
     if (odds.length) priced.add(id);
   }
+  setCachedOddsBatch(batch);
   return priced;
 }
 

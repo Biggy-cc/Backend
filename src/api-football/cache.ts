@@ -26,7 +26,12 @@ function emptyCache(): CacheFile {
   return { day: todayUtc(), calls: 0, odds: {}, oddsDates: {} };
 }
 
-function load(): CacheFile {
+/** In-memory cache — avoid sync disk I/O on every odds line (blocks Node / Railway). */
+let mem: CacheFile | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let dirty = false;
+
+function readDisk(): CacheFile {
   try {
     const path = cachePath();
     if (!existsSync(path)) return emptyCache();
@@ -44,46 +49,68 @@ function load(): CacheFile {
   }
 }
 
-function save(cache: CacheFile): void {
+function ensureMem(): CacheFile {
+  if (!mem || mem.day !== todayUtc()) {
+    mem = readDisk();
+  }
+  return mem;
+}
+
+function flushToDisk(): void {
+  if (!dirty || !mem) return;
   try {
     const path = cachePath();
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(cache), "utf8");
+    writeFileSync(path, JSON.stringify(mem), "utf8");
+    dirty = false;
   } catch (err) {
     console.warn("[api-football] cache write failed:", err);
   }
 }
 
+function scheduleFlush(): void {
+  dirty = true;
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushToDisk();
+  }, 1500);
+}
+
+function mutate(fn: (cache: CacheFile) => void): void {
+  const cache = ensureMem();
+  fn(cache);
+  scheduleFlush();
+}
+
 export function getApiFootballCallsToday(): number {
-  return load().calls;
+  return ensureMem().calls;
 }
 
 export function recordApiFootballCall(n = 1): void {
-  const cache = load();
-  cache.calls += n;
-  save(cache);
+  mutate((cache) => {
+    cache.calls += n;
+  });
 }
 
-export function getCachedFixtures(
-  maxAgeMs: number
-): TxlineFixture[] | null {
-  const cache = load();
+export function getCachedFixtures(maxAgeMs: number): TxlineFixture[] | null {
+  const cache = ensureMem();
   if (!cache.fixtures) return null;
   if (Date.now() - cache.fixtures.savedAt > maxAgeMs) return null;
   return cache.fixtures.data;
 }
 
 export function setCachedFixtures(data: TxlineFixture[]): void {
-  const cache = load();
-  cache.fixtures = { savedAt: Date.now(), data };
-  save(cache);
+  mutate((cache) => {
+    cache.fixtures = { savedAt: Date.now(), data };
+  });
 }
 
 export function getCachedOdds(
   fixtureId: number,
   maxAgeMs: number
 ): TxlineOddsEntry[] | null {
-  const cache = load();
+  const cache = ensureMem();
   const row = cache.odds[String(fixtureId)];
   if (!row) return null;
   if (Date.now() - row.savedAt > maxAgeMs) return null;
@@ -94,21 +121,34 @@ export function setCachedOdds(
   fixtureId: number,
   data: TxlineOddsEntry[]
 ): void {
-  const cache = load();
-  cache.odds[String(fixtureId)] = { savedAt: Date.now(), data };
-  save(cache);
+  mutate((cache) => {
+    cache.odds[String(fixtureId)] = { savedAt: Date.now(), data };
+  });
+}
+
+/** Write many fixtures' odds in one memory update (one delayed disk flush). */
+export function setCachedOddsBatch(
+  entries: Array<{ fixtureId: number; data: TxlineOddsEntry[] }>
+): void {
+  if (!entries.length) return;
+  mutate((cache) => {
+    const now = Date.now();
+    for (const { fixtureId, data } of entries) {
+      cache.odds[String(fixtureId)] = { savedAt: now, data };
+    }
+  });
 }
 
 export function wasOddsDateFetched(date: string, maxAgeMs: number): boolean {
-  const cache = load();
+  const cache = ensureMem();
   const at = cache.oddsDates?.[date];
   if (at == null) return false;
   return Date.now() - at <= maxAgeMs;
 }
 
 export function markOddsDateFetched(date: string): void {
-  const cache = load();
-  cache.oddsDates = cache.oddsDates ?? {};
-  cache.oddsDates[date] = Date.now();
-  save(cache);
+  mutate((cache) => {
+    cache.oddsDates = cache.oddsDates ?? {};
+    cache.oddsDates[date] = Date.now();
+  });
 }
