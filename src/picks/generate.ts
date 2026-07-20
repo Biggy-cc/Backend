@@ -4,8 +4,9 @@ import {
   fixtureKickoffMs,
   fixtureLabel,
   selectPicksFixtures,
+  warmOddsForFixtures,
   type TxlineOddsEntry,
-} from "../txline/client.js";
+} from "../providers/football.js";
 import { generateJsonLlm } from "./llm.js";
 import { researchMatches, researchMatchesLight, type EnrichedMatch } from "./research.js";
 import {
@@ -82,6 +83,8 @@ async function loadMatchBundles(): Promise<MatchBundle[]> {
 
   if (upcoming.length === 0) return [];
 
+  await warmOddsForFixtures(upcoming);
+
   console.log(
     `[picks] ${upcoming.length} upcoming fixtures:`,
     upcoming
@@ -115,6 +118,21 @@ async function loadMatchBundles(): Promise<MatchBundle[]> {
   return bundles;
 }
 
+function prioritizeMarkets(odds: TxlineOddsEntry[], limit = 55): TxlineOddsEntry[] {
+  const rank = (o: TxlineOddsEntry): number => {
+    const m = o.MarketType;
+    if (m === "1X2") return 0;
+    if (m === "BTTS") return 1;
+    if (m === "Double Chance") return 2;
+    if (m === "Total Goals") return 3;
+    if (m === "Asian Handicap") return 4;
+    if (m === "Draw No Bet") return 5;
+    if (m === "Total Corners") return 6;
+    return 10;
+  };
+  return [...odds].sort((a, b) => rank(a) - rank(b)).slice(0, limit);
+}
+
 function buildUnifiedPrompt(bundles: MatchBundle[], retryErrors?: string[]): string {
   const matchData = bundles.map(({ fixture, odds, research, newsArticles }) => ({
     match: `${fixture.Participant1} vs ${fixture.Participant2}`,
@@ -128,7 +146,7 @@ function buildUnifiedPrompt(bundles: MatchBundle[], retryErrors?: string[]): str
       angle: research.bettingAngle,
     },
     headlines: newsArticles.map((a) => ({ title: a.title, url: a.url })),
-    markets: odds.slice(0, 35).map((o) => ({
+    markets: prioritizeMarkets(odds).map((o) => ({
       market: o.MarketType,
       period: o.MarketPeriod,
       selection: o.Selection,

@@ -18,6 +18,7 @@
     "test:gemini-grounding": "tsx scripts/test-gemini-grounding.ts",
     "test:solana": "tsx scripts/test-solana.ts",
     "test:txline": "tsx scripts/test-txline.ts",
+    "test:api-football": "tsx scripts/test-api-football.ts",
     "picks:generate": "tsx scripts/generate-picks.ts"
   },
   "engines": {

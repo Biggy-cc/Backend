@@ -114,7 +114,10 @@ function pickBestHitLegs(bundle: Bundle): ReturnType<typeof leg>[] {
     (o) =>
       o.MarketType === "Total Goals" ||
       o.MarketType === "1X2" ||
-      o.MarketType === "Asian Handicap"
+      o.MarketType === "Asian Handicap" ||
+      o.MarketType === "BTTS" ||
+      o.MarketType === "Double Chance" ||
+      o.MarketType === "Draw No Bet"
   );
 
   let best: ReturnType<typeof leg>[] | null = null;

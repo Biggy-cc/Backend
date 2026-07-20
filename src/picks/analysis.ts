@@ -1,10 +1,10 @@
-import { fixtureKickoffMs, fixtureLabel } from "../txline/client.js";
+import { fixtureKickoffMs, fixtureLabel } from "../providers/football.js";
 import type { EnrichedMatch } from "./research.js";
 import { generateJsonLlm } from "./llm.js";
 import type { DailyPicksBundle } from "./validate.js";
 import { validateCorrelatedLegs, validateDuplicateLegs, hasMetaTierProse, stripMetaTierProse } from "./validate.js";
 import type { PickTier } from "./types.js";
-import type { TxlineOddsEntry } from "../txline/client.js";
+import type { TxlineOddsEntry } from "../providers/football.js";
 import { getCachedPickContent } from "./store.js";
 import { slipHtmlToPlain } from "./types.js";
 

@@ -2,10 +2,15 @@ import { runMigrations } from "../db/client.js";
 import {
   fetchFixturesSnapshot,
   fetchOddsForFixture,
+  fixtureKickoffMs,
   fixtureLabel,
+  getFootballDataProvider,
+  isBettableFixture,
   selectPicksFixtures,
+  warmOddsForFixtures,
   type TxlineOddsEntry,
-} from "../txline/client.js";
+} from "../providers/football.js";
+import { getApiFootballConfig } from "../api-football/config.js";
 import { enrichBundleWithHeadlines } from "./analysis.js";
 import {
   persistPickBundle,
@@ -54,11 +59,30 @@ async function cachedPicks(pickDate: string): Promise<Record<PickTier, string> |
   return null;
 }
 
-/** Fixtures + RSS headlines + parallel odds. No LLM, no Google Search grounding. */
+/** Fixtures + RSS headlines + odds. API-Football uses date-batch (1–2 calls). */
 async function loadPublishBundles(): Promise<MatchBundle[]> {
   const all = await fetchFixturesSnapshot();
-  const upcoming = selectPicksFixtures(all);
+  if (!all.length) return [];
+
+  // Warm odds for the whole upcoming window first (date-batch), then pick
+  // the best markets — not just the first preferred-league kickoffs.
+  if (getFootballDataProvider() === "api-football") {
+    const nowMs = Date.now();
+    const candidates = all.filter(
+      (f) => isBettableFixture(f, nowMs) && fixtureKickoffMs(f) >= nowMs
+    );
+    await warmOddsForFixtures(candidates);
+  }
+
+  let upcoming = selectPicksFixtures(all);
   if (!upcoming.length) return [];
+
+  if (getFootballDataProvider() === "api-football") {
+    const max = Math.max(getApiFootballConfig().maxOddsFetches, upcoming.length);
+    if (upcoming.length > max) {
+      upcoming = upcoming.slice(0, max);
+    }
+  }
 
   console.log(
     `[publish] ${upcoming.length} fixtures:`,

@@ -11,9 +11,10 @@ import {
   fetchFixturesSnapshot,
   fixtureKickoffMs,
   fixtureLabel,
+  getFootballDataProvider,
   isBettableFixture,
   isWorldCupFixture,
-} from "../txline/client.js";
+} from "../providers/football.js";
 
 const IMPORTANT_HEADLINE =
   /injur|suspension|suspended|lineup|line-up|starting\s*11|starting\s*xi|doubt|ruled\s*out|squad|miss|return|fit|ban|red\s*card|hamstring|knock|absent|available|press\s*conference|team\s*news/i;
@@ -23,8 +24,11 @@ function upcomingWorldCupFixtures(hoursAhead = 72) {
   return all.then((fixtures) => {
     const now = Date.now();
     const horizon = now + hoursAhead * 60 * 60 * 1000;
+    const provider = getFootballDataProvider();
     return fixtures
-      .filter(isWorldCupFixture)
+      .filter((f) =>
+        provider === "api-football" ? true : isWorldCupFixture(f)
+      )
       .filter((f) => isBettableFixture(f, now))
       .filter((f) => {
         const k = fixtureKickoffMs(f);

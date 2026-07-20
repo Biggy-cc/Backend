@@ -4,7 +4,7 @@ import {
   fetchOddsForFixture,
   fixtureLabel,
   selectPicksFixtures,
-} from "../txline/client.js";
+} from "../providers/football.js";
 import { persistPickBundle } from "./carry-forward.js";
 import type { GenerateResult } from "./generate.js";
 import { buildOddsFallbackBundle } from "./fallback.js";

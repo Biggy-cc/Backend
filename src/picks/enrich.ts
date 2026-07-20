@@ -3,8 +3,9 @@ import {
   fetchOddsForFixture,
   fixtureLabel,
   selectPicksFixtures,
+  warmOddsForFixtures,
   type TxlineOddsEntry,
-} from "../txline/client.js";
+} from "../providers/football.js";
 import {
   bundleHasThinBreakdowns,
   enrichBundleWithGeminiAnalysis,
@@ -36,6 +37,8 @@ async function loadEnrichBundles(batch: DailyPicksBundle): Promise<MatchBundle[]
   );
 
   if (!upcoming.length) return [];
+
+  await warmOddsForFixtures(upcoming);
 
   console.log(`[enrich] Grounded research for ${upcoming.length} matches…`);
   const enriched = await researchMatches(upcoming);

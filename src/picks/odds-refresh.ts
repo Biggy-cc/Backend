@@ -2,11 +2,13 @@ import {
   fetchFixturesSnapshot,
   fetchOddsForFixture,
   fixtureLabel,
+  getFootballDataProvider,
   isBettableFixture,
   isWorldCupFixture,
+  warmOddsForFixtures,
   type TxlineFixture,
   type TxlineOddsEntry,
-} from "../txline/client.js";
+} from "../providers/football.js";
 import { summarizeOddsMoves } from "./changelog.js";
 import type { GenerateResult } from "./generate.js";
 import { getCachedPickContent } from "./store.js";
@@ -39,6 +41,11 @@ function findFixture(matchName: string, fixtures: TxlineFixture[]): TxlineFixtur
   return fixtures.find(
     (f) => normalizeMatchName(fixtureLabel(f)) === normalizeMatchName(matchName)
   );
+}
+
+function poolFixtures(all: TxlineFixture[]): TxlineFixture[] {
+  if (getFootballDataProvider() === "api-football") return all;
+  return all.filter(isWorldCupFixture);
 }
 
 /** Match a stored leg selection to a live TxLINE odds row. */
@@ -103,18 +110,38 @@ type OddsMove = {
 };
 
 /**
- * Re-pull TxLINE odds for locked legs. Bump version when any line moves materially.
+ * Re-pull odds for locked legs. Bump version when any line moves materially.
  * Keeps selections and analysis — only price/combined updates.
+ * @param options.force — bypass short API cache (use on scheduled watches)
  */
-export async function refreshStoredOdds(pickDate: string): Promise<GenerateResult | null> {
+export async function refreshStoredOdds(
+  pickDate: string,
+  options?: { force?: boolean }
+): Promise<GenerateResult | null> {
   const previous = await loadStoredBatch(pickDate);
   if (!previous) return null;
 
   const all = await fetchFixturesSnapshot();
-  const wc = all.filter(isWorldCupFixture);
+  const pool = poolFixtures(all);
   const now = Date.now();
   const oddsCache = new Map<number, TxlineOddsEntry[]>();
   const moves: OddsMove[] = [];
+
+  // One/two date calls instead of per-leg
+  const legsFixtures = new Map<number, TxlineFixture>();
+  for (const tier of TIERS) {
+    for (const leg of previous.picks[tier].legs) {
+      const fixture = findFixture(leg.match, pool);
+      if (fixture && isBettableFixture(fixture, now)) {
+        legsFixtures.set(fixture.FixtureId, fixture);
+      }
+    }
+  }
+  if (legsFixtures.size) {
+    await warmOddsForFixtures([...legsFixtures.values()], {
+      force: options?.force,
+    });
+  }
 
   const bundle = {
     dailyThesis: previous.thesis,
@@ -127,12 +154,14 @@ export async function refreshStoredOdds(pickDate: string): Promise<GenerateResul
 
   for (const tier of TIERS) {
     for (const leg of bundle.picks[tier].legs) {
-      const fixture = findFixture(leg.match, wc);
+      const fixture = findFixture(leg.match, pool);
       if (!fixture || !isBettableFixture(fixture, now)) continue;
 
       let odds = oddsCache.get(fixture.FixtureId);
       if (!odds) {
-        odds = await fetchOddsForFixture(fixture.FixtureId, fixture);
+        odds = await fetchOddsForFixture(fixture.FixtureId, fixture, {
+          force: options?.force,
+        });
         oddsCache.set(fixture.FixtureId, odds);
       }
 

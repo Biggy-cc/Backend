@@ -1,11 +1,12 @@
 import {
   fetchFixturesSnapshot,
   fixtureLabel,
+  getFootballDataProvider,
   isBettableFixture,
   isWorldCupFixture,
   selectPicksFixtures,
   type TxlineFixture,
-} from "../txline/client.js";
+} from "../providers/football.js";
 import { getCachedPickContent, loadStoredBatch } from "./store.js";
 import { slipHtmlToPlain } from "./types.js";
 import type { PickTier } from "./types.js";
@@ -51,6 +52,11 @@ async function collectUsedMatches(pickDate: string): Promise<Set<string>> {
   return used;
 }
 
+function poolFixtures(all: TxlineFixture[]): TxlineFixture[] {
+  if (getFootballDataProvider() === "api-football") return all;
+  return all.filter(isWorldCupFixture);
+}
+
 function findFixture(matchName: string, fixtures: TxlineFixture[]) {
   return fixtures.find(
     (f) => normalizeMatchName(fixtureLabel(f)) === matchName
@@ -59,8 +65,8 @@ function findFixture(matchName: string, fixtures: TxlineFixture[]) {
 
 export async function isLegBettable(matchName: string): Promise<boolean> {
   const all = await fetchFixturesSnapshot();
-  const wc = all.filter(isWorldCupFixture);
-  const fixture = findFixture(normalizeMatchName(matchName), wc);
+  const pool = poolFixtures(all);
+  const fixture = findFixture(normalizeMatchName(matchName), pool);
   if (!fixture) return false;
   return isBettableFixture(fixture);
 }
@@ -79,12 +85,12 @@ export async function validateBundleBettable(
   bundle: DailyPicksBundle
 ): Promise<string | null> {
   const all = await fetchFixturesSnapshot();
-  const wc = all.filter(isWorldCupFixture);
+  const pool = poolFixtures(all);
   const now = Date.now();
 
   for (const tier of TIERS) {
     for (const leg of bundle.picks[tier].legs) {
-      const fixture = findFixture(normalizeMatchName(leg.match), wc);
+      const fixture = findFixture(normalizeMatchName(leg.match), pool);
       if (!fixture) {
         return `Leg references unknown match: ${leg.match}`;
       }
@@ -107,11 +113,11 @@ export async function picksStaleDueToKickoff(pickDate: string): Promise<boolean>
   }
 
   const all = await fetchFixturesSnapshot();
-  const wc = all.filter(isWorldCupFixture);
+  const pool = poolFixtures(all);
   const now = Date.now();
 
   for (const matchName of usedMatches) {
-    const fixture = findFixture(matchName, wc);
+    const fixture = findFixture(matchName, pool);
     if (fixture && !isBettableFixture(fixture, now)) {
       return true;
     }
@@ -124,7 +130,7 @@ export async function picksStaleDueToKickoff(pickDate: string): Promise<boolean>
 export async function upcomingBettableSummary(max = 3): Promise<string> {
   const all = await fetchFixturesSnapshot();
   const upcoming = selectPicksFixtures(all).slice(0, max);
-  if (upcoming.length === 0) return "the next World Cup kickoffs";
+  if (upcoming.length === 0) return "the next football kickoffs";
   return upcoming.map((f) => fixtureLabel(f)).join(", ");
 }
 
@@ -133,11 +139,11 @@ export async function isPickContentStale(html: string): Promise<boolean> {
   if (used.size === 0) return false;
 
   const all = await fetchFixturesSnapshot();
-  const wc = all.filter(isWorldCupFixture);
+  const pool = poolFixtures(all);
   const now = Date.now();
 
   for (const matchName of used) {
-    const fixture = findFixture(matchName, wc);
+    const fixture = findFixture(matchName, pool);
     if (fixture && !isBettableFixture(fixture, now)) {
       return true;
     }
