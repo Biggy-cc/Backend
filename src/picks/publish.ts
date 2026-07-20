@@ -64,13 +64,13 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
   const all = await fetchFixturesSnapshot();
   if (!all.length) return [];
 
-  // Warm odds for the whole upcoming window first (date-batch), then pick
-  // the best markets — not just the first preferred-league kickoffs.
+  // Warm date-batch odds only (cheap), then pick best boards — don't
+  // re-fetch per-id for every upcoming fixture on publish.
   if (getFootballDataProvider() === "api-football") {
     const nowMs = Date.now();
-    const candidates = all.filter(
-      (f) => isBettableFixture(f, nowMs) && fixtureKickoffMs(f) >= nowMs
-    );
+    const candidates = all
+      .filter((f) => isBettableFixture(f, nowMs) && fixtureKickoffMs(f) >= nowMs)
+      .slice(0, 40);
     await warmOddsForFixtures(candidates);
   }
 
