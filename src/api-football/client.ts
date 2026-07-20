@@ -51,8 +51,42 @@ type ApiOddsRow = {
 };
 
 let client: AxiosInstance | null = null;
-/** Stop outbound API-Football calls until this time after a provider 429. */
+/** Stop outbound API-Football calls until this time after a provider 429 / daily cap. */
 let providerRateLimitedUntil = 0;
+
+function pauseProviderUntil(msFromNowOrAbsolute: number, reason: string): void {
+  const until =
+    msFromNowOrAbsolute > 1e12
+      ? msFromNowOrAbsolute
+      : Date.now() + msFromNowOrAbsolute;
+  if (until <= providerRateLimitedUntil) return;
+  providerRateLimitedUntil = until;
+  console.warn(
+    `[api-football] ${reason} — pausing until ${new Date(providerRateLimitedUntil).toISOString()}`
+  );
+}
+
+function nextUtcMidnightPlus(min = 5): number {
+  const now = new Date();
+  return Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+    0,
+    min,
+    0
+  );
+}
+
+function isQuotaExhaustedMessage(msg: string): boolean {
+  return /request limit for the day|reached the request limit|Too many requests|rateLimit|rate-limited/i.test(
+    msg
+  );
+}
+
+export function isApiFootballProviderPaused(): boolean {
+  return Date.now() < providerRateLimitedUntil;
+}
 
 function getClient(): AxiosInstance {
   assertApiFootballConfigured();
@@ -93,7 +127,11 @@ async function apiGet<T>(
     recordApiFootballCall(1);
     const errors = res.data?.errors;
     if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
-      throw new Error(`API-Football error on ${path}: ${JSON.stringify(errors)}`);
+      const errText = JSON.stringify(errors);
+      if (isQuotaExhaustedMessage(errText)) {
+        pauseProviderUntil(nextUtcMidnightPlus(5), `quota error on ${path}`);
+      }
+      throw new Error(`API-Football error on ${path}: ${errText}`);
     }
     const remaining = res.headers["x-ratelimit-requests-remaining"];
     if (remaining != null) {
@@ -101,45 +139,24 @@ async function apiGet<T>(
       console.log(
         `[api-football] call ok — remaining today (provider): ${remaining} | local budget used: ${getApiFootballCallsToday()}/${getApiFootballConfig().dailyBudget}`
       );
-      // Provider counter can hit 0 while local budget still has room.
       if (Number.isFinite(rem) && rem <= 0) {
-        const now = new Date();
-        providerRateLimitedUntil = Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate() + 1,
-          0,
-          5,
-          0
-        );
-        console.warn(
-          `[api-football] provider remaining=0 — pausing until ${new Date(providerRateLimitedUntil).toISOString()}`
-        );
+        pauseProviderUntil(nextUtcMidnightPlus(5), "provider remaining=0");
       }
     }
     return res.data.response;
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 429) {
-      const now = new Date();
+    const msg = err instanceof Error ? err.message : String(err);
+    if (status === 429 || isQuotaExhaustedMessage(msg)) {
       const retryAfter = Number(
         (err as { response?: { headers?: Record<string, string> } })?.response
           ?.headers?.["retry-after"]
       );
-      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth(),
-            now.getUTCDate() + 1,
-            0,
-            5,
-            0
-          ) - now.getTime();
-      providerRateLimitedUntil = Date.now() + Math.max(waitMs, 60_000);
-      console.warn(
-        `[api-football] 429 on ${path} — pausing until ${new Date(providerRateLimitedUntil).toISOString()}`
-      );
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        pauseProviderUntil(retryAfter * 1000, `429 on ${path}`);
+      } else {
+        pauseProviderUntil(nextUtcMidnightPlus(5), `quota/429 on ${path}`);
+      }
     }
     throw err;
   }
@@ -379,6 +396,10 @@ export async function warmApiFootballOdds(
 
   let filled = 0;
   for (const fixture of missing) {
+    if (isApiFootballProviderPaused()) {
+      console.warn("[api-football] skipping per-id odds fill — provider paused");
+      break;
+    }
     if (filled >= cfg.maxOddsFetches) break;
     try {
       const rows = await apiGet<ApiOddsRow[]>("/odds", {
@@ -402,10 +423,9 @@ export async function warmApiFootballOdds(
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(
         `[api-football] odds fixture=${fixture.FixtureId} failed:`,
-        status ?? msg
+        status ?? msg.slice(0, 160)
       );
-      // Provider daily quota exhausted — stop burning more calls this warm.
-      if (status === 429) break;
+      if (status === 429 || isQuotaExhaustedMessage(msg)) break;
     }
   }
   if (filled) {
@@ -427,6 +447,10 @@ export async function fetchApiFootballOdds(
     if (cached?.length) return cached;
   }
 
+  if (isApiFootballProviderPaused()) {
+    return getCachedOdds(fixture.FixtureId, Number.POSITIVE_INFINITY) ?? [];
+  }
+
   try {
     const rows = await apiGet<ApiOddsRow[]>("/odds", {
       fixture: fixture.FixtureId,
@@ -444,9 +468,10 @@ export async function fetchApiFootballOdds(
     setCachedOdds(fixture.FixtureId, odds);
     return odds;
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.warn(
       `[api-football] odds fixture=${fixture.FixtureId} failed:`,
-      err
+      msg.slice(0, 160)
     );
     return getCachedOdds(fixture.FixtureId, Number.POSITIVE_INFINITY) ?? [];
   }

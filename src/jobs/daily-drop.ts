@@ -13,7 +13,7 @@ async function restDayNotice(): Promise<string> {
   const next = await upcomingBettableSummary(3);
   return `⚽ <b>Lines aren't on the feed yet</b>
 
-There's a World Cup kickoff coming up, but TxLINE hasn't posted (or has pulled) priced markets for today's card.
+There's a kickoff window coming up, but priced markets for today's card aren't on the feed yet (or the daily API quota is spent).
 
 Next up: ${next}.
 

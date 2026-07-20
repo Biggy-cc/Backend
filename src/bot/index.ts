@@ -111,7 +111,7 @@ async function startBotPolling(): Promise<void> {
     if (!content) {
       const next = await upcomingBettableSummary(3);
       await ctx.reply(
-        `No card in the system yet for today. Next fixtures: ${next}. The morning drop (8:00 UTC) publishes automatically when TxLINE has lines.`
+        `No card in the system yet for today. Next fixtures: ${next}. The morning drop (8:00 UTC) publishes automatically when priced lines are on the feed.`
       );
       return;
     }
