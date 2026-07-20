@@ -162,7 +162,12 @@ export async function checkPendingPayments(
     try {
       sigs = await connection.getSignaturesForAddress(reference, { limit: 10 });
     } catch (err) {
-      console.warn("[payments] Solana RPC error — will retry:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/429|Too many requests/i.test(msg)) {
+        // Surface to poller for backoff; avoid dumping full RPC error objects.
+        throw new Error("429 Too many requests (Solana RPC)");
+      }
+      console.warn("[payments] Solana RPC error — will retry:", msg.slice(0, 160));
       return;
     }
 

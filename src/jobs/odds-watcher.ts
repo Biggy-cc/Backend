@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import { broadcastToActiveUsers } from "../bot/broadcast.js";
 import { DAILY_DROP_TEXT } from "../bot/keyboards.js";
 import { isApiFootballFreeQuotaMode } from "../api-football/config.js";
+import { isApiFootballProviderPaused } from "../api-football/client.js";
 import { getFootballDataProvider } from "../providers/football.js";
 import { enrichDailyCard } from "../picks/enrich.js";
 import { todayPickDate } from "../picks/generate.js";
@@ -27,6 +28,10 @@ export async function runOddsWatcher(bot: Bot): Promise<void> {
     getFootballDataProvider() === "api-football" && isApiFootballFreeQuotaMode();
 
   if (hasCard) {
+    if (freeApiFootball && isApiFootballProviderPaused()) {
+      console.log("[odds-watch] Skipping refresh — API-Football provider paused");
+      return;
+    }
     // Force live odds pull on scheduled watches (bypass short API cache)
     const refreshed = await refreshStoredOdds(pickDate, { force: true });
     if (!refreshed) {
@@ -51,6 +56,13 @@ export async function runOddsWatcher(bot: Bot): Promise<void> {
         (err) => console.error("[odds-watch] Social update failed:", err)
       );
     }
+    return;
+  }
+
+  if (freeApiFootball && isApiFootballProviderPaused()) {
+    console.log(
+      `[odds-watch] No card for ${pickDate} — skipping publish (API-Football quota paused)`
+    );
     return;
   }
 
