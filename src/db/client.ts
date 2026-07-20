@@ -1,10 +1,13 @@
-import Database, { type Database as SqliteDatabase } from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
+import type { Database as SqliteDatabase } from "better-sqlite3";
 import { getD1Config, d1Batch, d1Exec, d1Query } from "./d1-client.js";
 import { BASE_SCHEMA, SQLITE_ALTER_STATEMENTS } from "./schema.js";
 
 export type DbBackend = "sqlite" | "d1";
+
+const require = createRequire(import.meta.url);
 
 let sqliteDb: SqliteDatabase | null = null;
 let d1Config = getD1Config();
@@ -17,6 +20,8 @@ export function getDbBackend(): DbBackend {
 
 function sqlite(): SqliteDatabase {
   if (!sqliteDb) {
+    // Lazy-load native module so D1-only Railway boots even if sqlite binding fails
+    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
     const dbPath = process.env.DATABASE_PATH ?? "./data/biggy.db";
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     sqliteDb = new Database(dbPath);

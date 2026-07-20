@@ -32,6 +32,8 @@ type CacheEntry = {
 const matchCache = new Map<string, CacheEntry>();
 let dailyCallCount = 0;
 let dailyCallDate = "";
+/** Skip outbound calls until this time (Highlightly daily 429). */
+let rateLimitedUntil = 0;
 
 function getApiKey(): string | null {
   const key = process.env.HIGHLIGHTLY_API_KEY?.trim();
@@ -78,6 +80,10 @@ async function fetchMatchesRaw(
     return cached.matches;
   }
 
+  if (Date.now() < rateLimitedUntil) {
+    return cached?.matches ?? [];
+  }
+
   const url = new URL(`${BASE_URL}/football/matches`);
   url.searchParams.set("date", date);
   url.searchParams.set("limit", "100");
@@ -91,7 +97,25 @@ async function fetchMatchesRaw(
   });
 
   if (!res.ok) {
-    console.error("[highlightly] matches failed:", res.status, await res.text().catch(() => ""));
+    const body = await res.text().catch(() => "");
+    if (res.status === 429) {
+      // Free tier daily cap — cool off until ~next UTC midnight (+1h buffer).
+      const now = new Date();
+      const nextUtcMidnight = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+        1,
+        0,
+        0
+      );
+      rateLimitedUntil = Math.max(rateLimitedUntil, nextUtcMidnight);
+      console.warn(
+        `[highlightly] daily limit hit (429) — pausing until ${new Date(rateLimitedUntil).toISOString()}`
+      );
+    } else {
+      console.error("[highlightly] matches failed:", res.status, body.slice(0, 200));
+    }
     return cached?.matches ?? [];
   }
 

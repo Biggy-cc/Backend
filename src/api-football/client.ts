@@ -51,6 +51,8 @@ type ApiOddsRow = {
 };
 
 let client: AxiosInstance | null = null;
+/** Stop outbound API-Football calls until this time after a provider 429. */
+let providerRateLimitedUntil = 0;
 
 function getClient(): AxiosInstance {
   assertApiFootballConfigured();
@@ -80,20 +82,67 @@ async function apiGet<T>(
   path: string,
   params?: Record<string, string | number>
 ): Promise<T> {
-  assertBudget(1);
-  const res = await getClient().get<ApiEnvelope<T>>(path, { params });
-  recordApiFootballCall(1);
-  const errors = res.data?.errors;
-  if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
-    throw new Error(`API-Football error on ${path}: ${JSON.stringify(errors)}`);
-  }
-  const remaining = res.headers["x-ratelimit-requests-remaining"];
-  if (remaining != null) {
-    console.log(
-      `[api-football] call ok — remaining today (provider): ${remaining} | local budget used: ${getApiFootballCallsToday()}/${getApiFootballConfig().dailyBudget}`
+  if (Date.now() < providerRateLimitedUntil) {
+    throw new Error(
+      `API-Football provider rate-limited until ${new Date(providerRateLimitedUntil).toISOString()}`
     );
   }
-  return res.data.response;
+  assertBudget(1);
+  try {
+    const res = await getClient().get<ApiEnvelope<T>>(path, { params });
+    recordApiFootballCall(1);
+    const errors = res.data?.errors;
+    if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
+      throw new Error(`API-Football error on ${path}: ${JSON.stringify(errors)}`);
+    }
+    const remaining = res.headers["x-ratelimit-requests-remaining"];
+    if (remaining != null) {
+      const rem = Number(remaining);
+      console.log(
+        `[api-football] call ok — remaining today (provider): ${remaining} | local budget used: ${getApiFootballCallsToday()}/${getApiFootballConfig().dailyBudget}`
+      );
+      // Provider counter can hit 0 while local budget still has room.
+      if (Number.isFinite(rem) && rem <= 0) {
+        const now = new Date();
+        providerRateLimitedUntil = Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() + 1,
+          0,
+          5,
+          0
+        );
+        console.warn(
+          `[api-football] provider remaining=0 — pausing until ${new Date(providerRateLimitedUntil).toISOString()}`
+        );
+      }
+    }
+    return res.data.response;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 429) {
+      const now = new Date();
+      const retryAfter = Number(
+        (err as { response?: { headers?: Record<string, string> } })?.response
+          ?.headers?.["retry-after"]
+      );
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate() + 1,
+            0,
+            5,
+            0
+          ) - now.getTime();
+      providerRateLimitedUntil = Date.now() + Math.max(waitMs, 60_000);
+      console.warn(
+        `[api-football] 429 on ${path} — pausing until ${new Date(providerRateLimitedUntil).toISOString()}`
+      );
+    }
+    throw err;
+  }
 }
 
 function toFixture(row: ApiFixtureRow): TxlineFixture {
@@ -349,10 +398,14 @@ export async function warmApiFootballOdds(
       setCachedOdds(fixture.FixtureId, odds);
       if (odds.length) priced.add(fixture.FixtureId);
     } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const msg = err instanceof Error ? err.message : String(err);
       console.warn(
         `[api-football] odds fixture=${fixture.FixtureId} failed:`,
-        err
+        status ?? msg
       );
+      // Provider daily quota exhausted — stop burning more calls this warm.
+      if (status === 429) break;
     }
   }
   if (filled) {

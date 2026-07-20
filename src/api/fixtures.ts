@@ -50,19 +50,29 @@ function selectDisplayFixtures(all: TxlineFixture[], max = 12): TxlineFixture[] 
 }
 
 export async function getUpcomingFixturesPayload(): Promise<FixtureApiItem[]> {
-  const all = await fetchFixturesSnapshot();
+  try {
+    const all = await Promise.race([
+      fetchFixturesSnapshot(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("fixtures snapshot timeout")), 12_000)
+      ),
+    ]);
 
-  return selectDisplayFixtures(all).map((f) => ({
-    id: String(f.FixtureId),
-    home: {
-      name: f.Participant1,
-      countryCode: teamToCountryCode(f.Participant1),
-    },
-    away: {
-      name: f.Participant2,
-      countryCode: teamToCountryCode(f.Participant2),
-    },
-    kickoffAt: new Date(fixtureKickoffMs(f)).toISOString(),
-    competition: f.Competition,
-  }));
+    return selectDisplayFixtures(all).map((f) => ({
+      id: String(f.FixtureId),
+      home: {
+        name: f.Participant1,
+        countryCode: teamToCountryCode(f.Participant1),
+      },
+      away: {
+        name: f.Participant2,
+        countryCode: teamToCountryCode(f.Participant2),
+      },
+      kickoffAt: new Date(fixtureKickoffMs(f)).toISOString(),
+      competition: f.Competition,
+    }));
+  } catch (err) {
+    console.error("[api] fixtures payload failed:", err);
+    return [];
+  }
 }
