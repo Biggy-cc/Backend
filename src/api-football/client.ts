@@ -53,6 +53,16 @@ type ApiOddsRow = {
 let client: AxiosInstance | null = null;
 /** Stop outbound API-Football calls until this time after a provider 429 / daily cap. */
 let providerRateLimitedUntil = 0;
+/** Free tier is ~10 req/min — serialize outbound calls with a floor gap. */
+let lastApiFootballCallAt = 0;
+const FREE_MIN_GAP_MS = 7_000;
+
+async function throttleFreeTier(): Promise<void> {
+  const cfg = getApiFootballConfig();
+  if (cfg.quotaMode !== "free") return;
+  const wait = FREE_MIN_GAP_MS - (Date.now() - lastApiFootballCallAt);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+}
 
 function pauseProviderUntil(msFromNowOrAbsolute: number, reason: string): void {
   const until =
@@ -94,7 +104,7 @@ function getClient(): AxiosInstance {
   const cfg = getApiFootballConfig();
   client = axios.create({
     baseURL: cfg.baseUrl,
-    timeout: 45_000,
+    timeout: cfg.quotaMode === "free" ? 20_000 : 45_000,
     headers: {
       "x-apisports-key": cfg.apiKey,
     },
@@ -122,6 +132,8 @@ async function apiGet<T>(
     );
   }
   assertBudget(1);
+  await throttleFreeTier();
+  lastApiFootballCallAt = Date.now();
   try {
     const res = await getClient().get<ApiEnvelope<T>>(path, { params });
     recordApiFootballCall(1);
@@ -275,7 +287,21 @@ export async function fetchApiFootballFixtures(): Promise<TxlineFixture[]> {
   }
 
   fixtures.sort((a, b) => a.StartTime - b.StartTime);
-  if (fixtures.length) setCachedFixtures(fixtures);
+  if (fixtures.length) {
+    setCachedFixtures(fixtures);
+    console.log(
+      `[api-football] ${fixtures.length} upcoming fixtures (mode=${cfg.quotaMode})`
+    );
+    return fixtures;
+  }
+
+  const stale = getCachedFixtures(Number.POSITIVE_INFINITY);
+  if (stale?.length) {
+    console.warn(
+      `[api-football] refresh returned 0 — serving stale fixtures cache (${stale.length})`
+    );
+    return stale;
+  }
   console.log(
     `[api-football] ${fixtures.length} upcoming fixtures (mode=${cfg.quotaMode})`
   );
@@ -387,6 +413,18 @@ export async function warmApiFootballOdds(
   }
 
   const cfg = getApiFootballConfig();
+  // Free plan: date-batch only. Per-id /odds burns the 10/min + 100/day caps
+  // and is what wedges publish mid-day.
+  if (cfg.quotaMode === "free") {
+    const missing = fixtures.filter((f) => !priced.has(f.FixtureId)).length;
+    if (missing) {
+      console.log(
+        `[api-football] free mode — skipping per-id odds fill (${missing} date-batch misses)`
+      );
+    }
+    return priced;
+  }
+
   const missing = fixtures.filter((f) => {
     if (priced.has(f.FixtureId)) return false;
     if (options?.force) return true;
@@ -447,8 +485,10 @@ export async function fetchApiFootballOdds(
     if (cached?.length) return cached;
   }
 
-  if (isApiFootballProviderPaused()) {
-    return getCachedOdds(fixture.FixtureId, Number.POSITIVE_INFINITY) ?? [];
+  const stale = getCachedOdds(fixture.FixtureId, Number.POSITIVE_INFINITY) ?? [];
+  if (isApiFootballProviderPaused() || cfg.quotaMode === "free") {
+    // Free: never spend a call on per-fixture /odds — date-batch only.
+    return stale;
   }
 
   try {
@@ -473,7 +513,7 @@ export async function fetchApiFootballOdds(
       `[api-football] odds fixture=${fixture.FixtureId} failed:`,
       msg.slice(0, 160)
     );
-    return getCachedOdds(fixture.FixtureId, Number.POSITIVE_INFINITY) ?? [];
+    return stale;
   }
 }
 

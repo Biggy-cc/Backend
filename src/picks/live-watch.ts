@@ -1,4 +1,5 @@
 import type { Bot } from "grammy";
+import { isHighlightlyPaused } from "../highlightly/client.js";
 import {
   buildLiveFeedHtml,
   buildLivePitchBlock,
@@ -193,6 +194,10 @@ async function publishLiveFeed(
 async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
   if (Date.now() - session.startedAt > SESSION_MAX_MS) {
     sessions.delete(session.telegramId);
+    return;
+  }
+
+  if (isHighlightlyPaused()) {
     return;
   }
 

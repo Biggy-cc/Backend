@@ -57,7 +57,12 @@ function itemSnippet(item: Parser.Item): string | undefined {
 async function searchNews(query: string, limit: number): Promise<NewsArticle[]> {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
   try {
-    const feed = await parser.parseURL(url);
+    const feed = await Promise.race([
+      parser.parseURL(url),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("rss timeout")), 8_000)
+      ),
+    ]);
     return (feed.items ?? [])
       .slice(0, limit)
       .map((item) => ({
@@ -83,32 +88,21 @@ export function articleMatchesFixture(
   return text.includes(a) || text.includes(b);
 }
 
-/** Headlines + optional snippets for a fixture. */
+/** Headlines + optional snippets for a fixture (1 RSS query — keep publish fast). */
 export async function fetchMatchNews(
   teamA: string,
   teamB: string,
   limit = 6
 ): Promise<NewsArticle[]> {
-  const queries = [
-    `${teamA} ${teamB} World Cup football`,
-    `${teamA} injury squad news`,
-    `${teamB} injury squad news`,
-    `${teamA} vs ${teamB} head to head`,
-  ];
-
+  const batch = await searchNews(`${teamA} vs ${teamB} football`, limit + 2);
   const seen = new Set<string>();
   const articles: NewsArticle[] = [];
-
-  for (const q of queries) {
-    const batch = await searchNews(q, 3);
-    for (const a of batch) {
-      if (seen.has(a.url)) continue;
-      seen.add(a.url);
-      if (!articleMatchesFixture(a, teamA, teamB)) continue;
-      articles.push(a);
-      if (articles.length >= limit) return articles;
-    }
+  for (const a of batch) {
+    if (seen.has(a.url)) continue;
+    seen.add(a.url);
+    if (!articleMatchesFixture(a, teamA, teamB)) continue;
+    articles.push(a);
+    if (articles.length >= limit) break;
   }
-
   return articles;
 }

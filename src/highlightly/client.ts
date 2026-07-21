@@ -35,6 +35,16 @@ let dailyCallDate = "";
 /** Skip outbound calls until this time (Highlightly daily 429). */
 let rateLimitedUntil = 0;
 
+export function isHighlightlyPaused(): boolean {
+  return Date.now() < rateLimitedUntil;
+}
+
+export function getHighlightlyCallsToday(): number {
+  const today = new Date().toISOString().slice(0, 10);
+  if (dailyCallDate !== today) return 0;
+  return dailyCallCount;
+}
+
 function getApiKey(): string | null {
   const key = process.env.HIGHLIGHTLY_API_KEY?.trim();
   return key || null;
@@ -189,6 +199,21 @@ export async function loadHighlightlyMatchesForLegs(
   const out = new Map<string, HighlightlyMatch>();
   if (!getApiKey() || matchLabels.length === 0) return out;
 
+  // Don't burn remaining free calls once paused / near daily wall.
+  if (isHighlightlyPaused() || getHighlightlyCallsToday() >= DAILY_WARN_AT) {
+    const fetchOpts = { fresh: false };
+    const pool: HighlightlyMatch[] = [
+      ...(await fetchMatchesRaw(pickDate, { leagueName: "World Cup" }, fetchOpts)),
+      ...(await fetchMatchesRaw(pickDate, { leagueName: "Friendlies" }, fetchOpts)),
+    ];
+    for (const label of matchLabels) {
+      const key = label.replace(/\s+/g, " ").trim();
+      const found = findHighlightlyMatch(key, pool);
+      if (found) out.set(key, found);
+    }
+    return out;
+  }
+
   const fetchOpts = { fresh: options.fresh };
   const pool: HighlightlyMatch[] = [
     ...(await fetchMatchesRaw(pickDate, { leagueName: "World Cup" }, fetchOpts)),
@@ -201,17 +226,25 @@ export async function loadHighlightlyMatchesForLegs(
     if (found) out.set(key, found);
   }
 
+  if (isHighlightlyPaused()) return out;
+
   const normKey = (label: string) => label.replace(/\s+/g, " ").trim();
   const unmatched = matchLabels.filter((l) => !out.has(normKey(l)));
   const searchedTeams = new Set<string>();
+  // Cap team lookups — each unmatched leg was 2 calls and burned free 100/day.
+  let teamLookups = 0;
+  const maxTeamLookups = 4;
 
   for (const label of unmatched) {
+    if (isHighlightlyPaused() || teamLookups >= maxTeamLookups) break;
     const teams = parseTeamsFromLabel(label);
     if (!teams) continue;
     for (const team of teams) {
+      if (isHighlightlyPaused() || teamLookups >= maxTeamLookups) break;
       const norm = normalizeTeamName(team);
       if (searchedTeams.has(norm)) continue;
       searchedTeams.add(norm);
+      teamLookups += 1;
 
       const extra = await fetchMatchesRaw(pickDate, { homeTeamName: team }, fetchOpts);
       pool.push(...extra);

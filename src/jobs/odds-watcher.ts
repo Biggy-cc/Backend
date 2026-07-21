@@ -13,6 +13,9 @@ import {
 } from "../picks/publish.js";
 import { postDailyFreePick, postPickUpdate } from "../social/posts.js";
 
+/** Prevent overlapping cron publishes from stacking and wedging the process. */
+let oddsWatchRunning = false;
+
 /**
  * Keep today's saved card fresh.
  *
@@ -22,6 +25,31 @@ import { postDailyFreePick, postPickUpdate } from "../social/posts.js";
  * Fallback: first publish / carry-forward if there is no card yet.
  */
 export async function runOddsWatcher(bot: Bot): Promise<void> {
+  if (oddsWatchRunning) {
+    console.log("[odds-watch] Already running — skip overlapping tick");
+    return;
+  }
+  oddsWatchRunning = true;
+
+  const work = runOddsWatcherInner(bot).finally(() => {
+    oddsWatchRunning = false;
+  });
+
+  const timedOut = await Promise.race([
+    work.then(() => false),
+    new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(true), 90_000)
+    ),
+  ]);
+
+  if (timedOut) {
+    console.error(
+      "[odds-watch] Tick still running after 90s — next cron will skip until it finishes"
+    );
+  }
+}
+
+async function runOddsWatcherInner(bot: Bot): Promise<void> {
   const pickDate = todayPickDate();
   const hasCard = await hasPublishedCard(pickDate);
   const freeApiFootball =
@@ -32,7 +60,6 @@ export async function runOddsWatcher(bot: Bot): Promise<void> {
       console.log("[odds-watch] Skipping refresh — API-Football provider paused");
       return;
     }
-    // Force live odds pull on scheduled watches (bypass short API cache)
     const refreshed = await refreshStoredOdds(pickDate, { force: true });
     if (!refreshed) {
       console.log("[odds-watch] Card present — no refresh result");
@@ -66,10 +93,10 @@ export async function runOddsWatcher(bot: Bot): Promise<void> {
     return;
   }
 
-  // No card yet — one publish (uses fixture cache + limited odds fetches)
   console.log(
     `[odds-watch] No card for ${pickDate} — publishing${freeApiFootball ? " (free-quota)" : ""}`
   );
+
   const published = await publishDailyCard(pickDate);
   if (!published) {
     console.log("[odds-watch] Publish unavailable");

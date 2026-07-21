@@ -8,6 +8,7 @@ import {
 import {
   isHighlightlyConfigured,
   isHighlightlyFinished,
+  isHighlightlyPaused,
   loadHighlightlyMatchesForLegs,
   scoreForPickLabel,
   type HighlightlyMatch,
@@ -102,6 +103,11 @@ export async function postPickUpdate(
 type WonLeg = { pickDate: string; tier: PickTier; leg: PickLeg; scoreLine?: string };
 
 async function findNewWonLegs(): Promise<WonLeg[]> {
+  if (isHighlightlyPaused()) {
+    console.log("[social] Highlightly paused — skip win check");
+    return [];
+  }
+
   const pickDate = todayPickDate();
   const dates = [pickDate];
   const yesterday = new Date();

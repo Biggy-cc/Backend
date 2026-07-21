@@ -64,24 +64,37 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
   const all = await fetchFixturesSnapshot();
   if (!all.length) return [];
 
+  const afCfg =
+    getFootballDataProvider() === "api-football"
+      ? getApiFootballConfig()
+      : null;
+
   // Warm date-batch odds only (cheap), then pick best boards — don't
   // re-fetch per-id for every upcoming fixture on publish.
-  if (getFootballDataProvider() === "api-football") {
+  if (afCfg) {
     const nowMs = Date.now();
+    // Prefer kickoffs ≥90m out so the card stays bettable after slow jobs.
+    const minKick = nowMs + 90 * 60 * 1000;
     const candidates = all
-      .filter((f) => isBettableFixture(f, nowMs) && fixtureKickoffMs(f) >= nowMs)
-      .slice(0, 40);
+      .filter(
+        (f) => isBettableFixture(f, nowMs) && fixtureKickoffMs(f) >= minKick
+      )
+      .slice(0, afCfg.quotaMode === "free" ? 24 : 40);
     await warmOddsForFixtures(candidates);
   }
 
   let upcoming = selectPicksFixtures(all);
   if (!upcoming.length) return [];
 
-  if (getFootballDataProvider() === "api-football") {
-    const max = Math.max(getApiFootballConfig().maxOddsFetches, upcoming.length);
-    if (upcoming.length > max) {
-      upcoming = upcoming.slice(0, max);
-    }
+  if (afCfg) {
+    const nowMs = Date.now();
+    const minKick = nowMs + 90 * 60 * 1000;
+    upcoming = upcoming.filter((f) => fixtureKickoffMs(f) >= minKick);
+    const max =
+      afCfg.quotaMode === "free"
+        ? Math.min(8, Math.max(afCfg.maxOddsFetches, 4))
+        : Math.max(afCfg.maxOddsFetches, upcoming.length);
+    if (upcoming.length > max) upcoming = upcoming.slice(0, max);
   }
 
   console.log(
@@ -89,16 +102,11 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
     upcoming.map((f) => fixtureLabel(f)).join(", ")
   );
 
+  // Free quota: skip Google RSS during publish — 12×RSS was hanging the API
+  // for minutes/hours. Enrich cron can add headlines later.
+  const skipHeadlines = afCfg?.quotaMode === "free";
   let enriched;
-  try {
-    enriched = await Promise.race([
-      researchMatchesLight(upcoming),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("headline research timeout")), 20_000)
-      ),
-    ]);
-  } catch (err) {
-    console.warn("[publish] Headline research skipped:", err);
+  if (skipHeadlines) {
     enriched = upcoming.map((fixture) => ({
       fixture,
       research: {
@@ -112,6 +120,30 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
       newsArticles: [],
       sources: [],
     }));
+  } else {
+    try {
+      enriched = await Promise.race([
+        researchMatchesLight(upcoming),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("headline research timeout")), 12_000)
+        ),
+      ]);
+    } catch (err) {
+      console.warn("[publish] Headline research skipped:", err);
+      enriched = upcoming.map((fixture) => ({
+        fixture,
+        research: {
+          match: fixtureLabel(fixture),
+          injuriesAndSuspensions: [] as string[],
+          headToHead: "See live lines",
+          recentForm: [] as Array<{ team: string; lastFive: string }>,
+          keyNews: [] as string[],
+          bettingAngle: "Pre-match lines on upcoming kickoff",
+        },
+        newsArticles: [],
+        sources: [],
+      }));
+    }
   }
 
   const bundles = await Promise.all(
