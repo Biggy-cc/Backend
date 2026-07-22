@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
+import { writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import type { TxlineFixture, TxlineOddsEntry } from "../txline/client.js";
 
@@ -26,12 +27,28 @@ function emptyCache(): CacheFile {
   return { day: todayUtc(), calls: 0, odds: {}, oddsDates: {} };
 }
 
+/**
+ * Disk flush is OFF on D1/Railway by default. Sync JSON.stringify + volume
+ * writes were freezing the event loop for minutes (API looked "offline").
+ * Set API_FOOTBALL_CACHE_DISK=1 to re-enable best-effort async persistence.
+ */
+function diskCacheEnabled(): boolean {
+  const flag = process.env.API_FOOTBALL_CACHE_DISK?.trim().toLowerCase();
+  if (flag === "1" || flag === "true" || flag === "on") return true;
+  if (flag === "0" || flag === "false" || flag === "off") return false;
+  // Default: memory-only when using Cloudflare D1 (typical Railway prod)
+  return process.env.DATABASE_BACKEND?.trim().toLowerCase() !== "d1";
+}
+
 /** In-memory cache — avoid sync disk I/O on every odds line (blocks Node / Railway). */
 let mem: CacheFile | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
+let flushing = false;
+let diskDisabledLogged = false;
 
 function readDisk(): CacheFile {
+  if (!diskCacheEnabled()) return emptyCache();
   try {
     const path = cachePath();
     if (!existsSync(path)) return emptyCache();
@@ -56,25 +73,67 @@ function ensureMem(): CacheFile {
   return mem;
 }
 
-function flushToDisk(): void {
-  if (!dirty || !mem) return;
+/** Keep odds map small so accidental disk flush can't freeze Node. */
+function pruneOdds(cache: CacheFile, keep = 80): void {
+  const ids = Object.keys(cache.odds);
+  if (ids.length <= keep) return;
+  const ranked = ids
+    .map((id) => ({ id, at: cache.odds[id]?.savedAt ?? 0 }))
+    .sort((a, b) => b.at - a.at);
+  for (const row of ranked.slice(keep)) {
+    delete cache.odds[row.id];
+  }
+}
+
+async function flushToDisk(): Promise<void> {
+  if (!diskCacheEnabled() || !dirty || !mem || flushing) return;
+  flushing = true;
+  dirty = false;
   try {
+    pruneOdds(mem);
     const path = cachePath();
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(mem), "utf8");
-    dirty = false;
+    // Move heavy stringify off the hot path of request handlers.
+    const snapshot = await new Promise<string>((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          resolve(JSON.stringify(mem));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    await Promise.race([
+      writeFile(path, snapshot, "utf8"),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("cache disk write timeout")), 5_000)
+      ),
+    ]);
   } catch (err) {
+    dirty = true;
     console.warn("[api-football] cache write failed:", err);
+  } finally {
+    flushing = false;
+    if (dirty) scheduleFlush();
   }
 }
 
 function scheduleFlush(): void {
+  if (!diskCacheEnabled()) {
+    if (!diskDisabledLogged) {
+      diskDisabledLogged = true;
+      console.log(
+        "[api-football] disk cache off (memory-only) — set API_FOOTBALL_CACHE_DISK=1 to persist"
+      );
+    }
+    return;
+  }
   dirty = true;
-  if (flushTimer) return;
+  if (flushTimer || flushing) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    flushToDisk();
-  }, 1500);
+    void flushToDisk();
+  }, 5_000);
 }
 
 function mutate(fn: (cache: CacheFile) => void): void {
@@ -123,6 +182,7 @@ export function setCachedOdds(
 ): void {
   mutate((cache) => {
     cache.odds[String(fixtureId)] = { savedAt: Date.now(), data };
+    pruneOdds(cache);
   });
 }
 
@@ -136,6 +196,7 @@ export function setCachedOddsBatch(
     for (const { fixtureId, data } of entries) {
       cache.odds[String(fixtureId)] = { savedAt: now, data };
     }
+    pruneOdds(cache);
   });
 }
 

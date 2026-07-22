@@ -33,6 +33,16 @@ export function startApiServer(port: number) {
   const server = http.createServer(async (req, res) => {
     const url = req.url?.split("?")[0];
 
+    // Health FIRST — never wait behind fixtures/D1/odds. Railway probes must
+    // get an instant 200 or the service is marked dead and looks "offline".
+    if (
+      req.method === "GET" &&
+      (url === "/api/health" || url === "/" || url === "/health")
+    ) {
+      sendJson(res, 200, { ok: true, ts: Date.now() });
+      return;
+    }
+
     if (req.method === "OPTIONS") {
       res.writeHead(204, CORS_HEADERS);
       res.end();
@@ -41,7 +51,12 @@ export function startApiServer(port: number) {
 
     if (req.method === "GET" && url === "/api/fixtures") {
       try {
-        const fixtures = await getUpcomingFixturesPayload();
+        const fixtures = await Promise.race([
+          getUpcomingFixturesPayload(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("fixtures timeout")), 10_000)
+          ),
+        ]);
         sendJson(res, 200, { fixtures }, {
           "Cache-Control": "public, max-age=60",
         });
@@ -54,7 +69,12 @@ export function startApiServer(port: number) {
 
     if (req.method === "GET" && url === "/api/track-record") {
       try {
-        const trackRecord = await getTrackRecordPayload();
+        const trackRecord = await Promise.race([
+          getTrackRecordPayload(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("track-record timeout")), 12_000)
+          ),
+        ]);
         sendJson(res, 200, { trackRecord }, {
           "Cache-Control": "public, max-age=120",
         });
@@ -62,17 +82,6 @@ export function startApiServer(port: number) {
         console.error("[api] /api/track-record failed:", err);
         sendJson(res, 502, { error: "Could not load track record" });
       }
-      return;
-    }
-
-    if (req.method === "GET" && url === "/api/health") {
-      sendJson(res, 200, { ok: true });
-      return;
-    }
-
-    // Railway / load-balancer probes sometimes hit /
-    if (req.method === "GET" && (url === "/" || url === "/health")) {
-      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -187,6 +196,11 @@ export function startApiServer(port: number) {
   server.listen(port, "0.0.0.0", () => {
     console.log(`API listening on 0.0.0.0:${port}`);
   });
+
+  // Don't let hung upstreams keep sockets open forever (Railway looks "offline").
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
+  server.keepAliveTimeout = 10_000;
 
   return server;
 }

@@ -20,7 +20,7 @@ import {
 import type { GenerateResult } from "./generate.js";
 import { buildOddsFallbackBundle, buildMinimalOddsBundle } from "./fallback.js";
 import { validateBundleBettable } from "./kickoff.js";
-import { researchMatchesLight, type EnrichedMatch } from "./research.js";
+import type { EnrichedMatch } from "./research.js";
 import { getCachedPickContent, getPickMeta, loadStoredBatch } from "./store.js";
 import type { PickTier } from "./types.js";
 import {
@@ -102,49 +102,20 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
     upcoming.map((f) => fixtureLabel(f)).join(", ")
   );
 
-  // Free quota: skip Google RSS during publish — 12×RSS was hanging the API
-  // for minutes/hours. Enrich cron can add headlines later.
-  const skipHeadlines = afCfg?.quotaMode === "free";
-  let enriched;
-  if (skipHeadlines) {
-    enriched = upcoming.map((fixture) => ({
-      fixture,
-      research: {
-        match: fixtureLabel(fixture),
-        injuriesAndSuspensions: [] as string[],
-        headToHead: "See live lines",
-        recentForm: [] as Array<{ team: string; lastFive: string }>,
-        keyNews: [] as string[],
-        bettingAngle: "Pre-match lines on upcoming kickoff",
-      },
-      newsArticles: [],
-      sources: [],
-    }));
-  } else {
-    try {
-      enriched = await Promise.race([
-        researchMatchesLight(upcoming),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("headline research timeout")), 12_000)
-        ),
-      ]);
-    } catch (err) {
-      console.warn("[publish] Headline research skipped:", err);
-      enriched = upcoming.map((fixture) => ({
-        fixture,
-        research: {
-          match: fixtureLabel(fixture),
-          injuriesAndSuspensions: [] as string[],
-          headToHead: "See live lines",
-          recentForm: [] as Array<{ team: string; lastFive: string }>,
-          keyNews: [] as string[],
-          bettingAngle: "Pre-match lines on upcoming kickoff",
-        },
-        newsArticles: [],
-        sources: [],
-      }));
-    }
-  }
+  // Never block publish on Google RSS — free or paid. Enrich adds color later.
+  const enriched = upcoming.map((fixture) => ({
+    fixture,
+    research: {
+      match: fixtureLabel(fixture),
+      injuriesAndSuspensions: [] as string[],
+      headToHead: "See live lines",
+      recentForm: [] as Array<{ team: string; lastFive: string }>,
+      keyNews: [] as string[],
+      bettingAngle: "Pre-match lines on upcoming kickoff",
+    },
+    newsArticles: [],
+    sources: [],
+  }));
 
   const bundles = await Promise.all(
     enriched.map(async (match) => {
@@ -153,6 +124,9 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
     })
   );
 
+  console.log(
+    `[publish] ${bundles.filter(Boolean).length}/${upcoming.length} fixtures have cached odds`
+  );
   return bundles.filter((b): b is MatchBundle => b != null);
 }
 
