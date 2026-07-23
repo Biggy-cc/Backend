@@ -103,31 +103,32 @@ async function loadPublishBundles(): Promise<MatchBundle[]> {
   );
 
   // Never block publish on Google RSS — free or paid. Enrich adds color later.
-  const enriched = upcoming.map((fixture) => ({
+  const enriched: EnrichedMatch[] = upcoming.map((fixture) => ({
     fixture,
     research: {
       match: fixtureLabel(fixture),
-      injuriesAndSuspensions: [] as string[],
+      injuriesAndSuspensions: [],
       headToHead: "See live lines",
-      recentForm: [] as Array<{ team: string; lastFive: string }>,
-      keyNews: [] as string[],
+      recentForm: [],
+      keyNews: [],
       bettingAngle: "Pre-match lines on upcoming kickoff",
     },
     newsArticles: [],
     sources: [],
   }));
 
-  const bundles = await Promise.all(
+  const bundles: Array<MatchBundle | null> = await Promise.all(
     enriched.map(async (match) => {
       const odds = await fetchOddsForFixture(match.fixture.FixtureId, match.fixture);
       return odds.length > 0 ? { ...match, odds } : null;
     })
   );
 
+  const withOdds = bundles.filter((b): b is MatchBundle => b != null);
   console.log(
-    `[publish] ${bundles.filter(Boolean).length}/${upcoming.length} fixtures have cached odds`
+    `[publish] ${withOdds.length}/${upcoming.length} fixtures have cached odds`
   );
-  return bundles.filter((b): b is MatchBundle => b != null);
+  return withOdds;
 }
 
 function buildPublishBundle(bundles: MatchBundle[]): DailyPicksBundle {
