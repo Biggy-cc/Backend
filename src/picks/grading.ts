@@ -1,11 +1,10 @@
-import { dbAll } from "../db/client.js";
 import {
-  isHighlightlyConfigured,
-  isHighlightlyFinished,
-  loadHighlightlyMatchesForLegs,
-  scoreForPickLabel,
-  type HighlightlyMatch,
-} from "../highlightly/client.js";
+  isApiFootballConfigured,
+  isRecentPickDate,
+  loadApiFootballScoresForLegs,
+  type ApiFootballLegScore,
+} from "../api-football/results.js";
+import { dbAll } from "../db/client.js";
 import {
   findReplayOddsForLeg,
   loadTxlineScoresForDate,
@@ -57,7 +56,12 @@ export type TrackRecordPayload = {
     hitLegs: { wins: number; total: number };
   };
   provenance: {
-    scoreSources: { highlightly: number; txline: number; manual: number };
+    scoreSources: {
+      apiFootball: number;
+      highlightly: number;
+      txline: number;
+      manual: number;
+    };
     oddsVerifiedLegs: number;
     settledLegs: number;
   };
@@ -192,17 +196,19 @@ export function gradeLegAtFullTime(leg: PickLeg): boolean | null {
 export function gradeLegForRecord(
   leg: PickLeg,
   pickDate: string,
-  hlByDate: Map<string, Map<string, HighlightlyMatch>>,
+  afByDate: Map<string, Map<string, ApiFootballLegScore>>,
   txByDate: Map<string, Map<string, TxlineScoreReplay>>,
-  scoreSources: { highlightly: number; txline: number; manual: number }
+  scoreSources: {
+    apiFootball: number;
+    highlightly: number;
+    txline: number;
+    manual: number;
+  }
 ): boolean | null {
-  const hl = hlByDate.get(pickDate)?.get(normalizeMatchKey(leg.match));
-  if (hl && isHighlightlyFinished(hl)) {
-    const score = scoreForPickLabel(leg.match, hl);
-    if (score) {
-      scoreSources.highlightly++;
-      return gradeLegWithScore(leg, score);
-    }
+  const af = afByDate.get(pickDate)?.get(normalizeMatchKey(leg.match));
+  if (af) {
+    scoreSources.apiFootball++;
+    return gradeLegWithScore(leg, af);
   }
 
   const tx = txByDate.get(pickDate)?.get(normalizeMatchKey(leg.match));
@@ -218,6 +224,16 @@ export function gradeLegForRecord(
   }
 
   return null;
+}
+
+function collectLegLabels(picks: DailyPicksBundle["picks"]): string[] {
+  const labels = new Set<string>();
+  for (const tier of ["hit", "aim", "go_big"] as PickTier[]) {
+    for (const leg of picks[tier]?.legs ?? []) {
+      labels.add(leg.match);
+    }
+  }
+  return [...labels];
 }
 
 export type LegLiveProgress = {
@@ -339,28 +355,38 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
   }
 
   const tiers: PickTier[] = ["hit", "aim", "go_big"];
-  const hlByDate = new Map<string, Map<string, HighlightlyMatch>>();
+  const afByDate = new Map<string, Map<string, ApiFootballLegScore>>();
   const txByDate = new Map<string, Map<string, TxlineScoreReplay>>();
-  const scoreSources = { highlightly: 0, txline: 0, manual: 0 };
+  const scoreSources = {
+    apiFootball: 0,
+    highlightly: 0,
+    txline: 0,
+    manual: 0,
+  };
   const replayEnabled = process.env.TXLINE_REPLAY_GRADING === "1";
 
-  if (isHighlightlyConfigured()) {
-    for (const [date, batch] of latestByDate) {
+  // API-Football only (no Highlightly) — last 5 pick dates max so free-tier
+  // 7s throttle can't blow past the HTTP / cron budget.
+  if (isApiFootballConfigured()) {
+    const recentDates = [...latestByDate.keys()]
+      .filter((d) => isRecentPickDate(d, 5))
+      .sort()
+      .reverse()
+      .slice(0, 5);
+    for (const date of recentDates) {
+      const batch = latestByDate.get(date);
+      if (!batch) continue;
       const picks = JSON.parse(batch.picks_json) as DailyPicksBundle["picks"];
-      const labels = new Set<string>();
-      for (const tier of ["hit", "aim", "go_big"] as PickTier[]) {
-        for (const leg of picks[tier]?.legs ?? []) {
-          labels.add(leg.match);
-        }
-      }
-      if (labels.size === 0) continue;
-      const matches = await loadHighlightlyMatchesForLegs(date, [...labels]);
-      hlByDate.set(date, matches);
+      const labels = collectLegLabels(picks);
+      if (labels.length === 0) continue;
+      const scores = await loadApiFootballScoresForLegs(date, labels);
+      if (scores.size > 0) afByDate.set(date, scores);
     }
   }
 
   if (replayEnabled) {
     for (const [date] of latestByDate) {
+      if (!isRecentPickDate(date, 5)) continue;
       const txMap = await loadTxlineScoresForDate(date);
       if (txMap.size > 0) txByDate.set(date, txMap);
     }
@@ -380,7 +406,13 @@ export async function computeTrackRecord(): Promise<TrackRecordPayload> {
       if (!slip?.legs?.length) continue;
 
       for (const leg of slip.legs) {
-        const grade = gradeLegForRecord(leg, date, hlByDate, txByDate, scoreSources);
+        const grade = gradeLegForRecord(
+          leg,
+          date,
+          afByDate,
+          txByDate,
+          scoreSources
+        );
         if (grade === null) continue;
         if (grade) {
           legWins++;

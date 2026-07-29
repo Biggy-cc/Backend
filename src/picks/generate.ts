@@ -398,7 +398,7 @@ async function generateDailyPicksInner(
   const matchBundles = await loadMatchBundles();
   if (matchBundles.length === 0) {
     throw new Error(
-      "No upcoming fixtures with live odds — waiting for TxLINE to publish lines for the next kickoffs"
+      "No upcoming fixtures with live odds — waiting for lines on the next kickoffs"
     );
   }
 

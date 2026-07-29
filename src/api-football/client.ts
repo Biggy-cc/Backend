@@ -517,6 +517,119 @@ export async function fetchApiFootballOdds(
   }
 }
 
+/** Finished / in-play score row from /fixtures?date= (not odds). */
+export type ApiFootballScore = {
+  fixtureId: number;
+  homeTeam: string;
+  awayTeam: string;
+  home: number;
+  away: number;
+  finished: boolean;
+  status: string;
+};
+
+type ApiFixtureScoreRow = {
+  fixture: {
+    id: number;
+    date?: string;
+    status?: { short?: string };
+  };
+  teams: {
+    home: { id: number; name: string };
+    away: { id: number; name: string };
+  };
+  goals?: { home: number | null; away: number | null };
+  score?: {
+    fulltime?: { home: number | null; away: number | null };
+    penalty?: { home: number | null; away: number | null };
+  };
+};
+
+const FT_STATUS = new Set(["FT", "AET", "PEN", "AWD", "WO"]);
+
+type ScoresCacheEntry = {
+  savedAt: number;
+  allFinished: boolean;
+  rows: ApiFootballScore[];
+};
+
+/** In-memory FT scores by UTC date — avoids burning /fixtures on every win check. */
+const scoresByDate = new Map<string, ScoresCacheEntry>();
+
+function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
+  const status = (row.fixture?.status?.short ?? "").toUpperCase();
+  const homeTeam = row.teams?.home?.name?.trim();
+  const awayTeam = row.teams?.away?.name?.trim();
+  if (!homeTeam || !awayTeam || !row.fixture?.id) return null;
+
+  const ftHome = row.score?.fulltime?.home ?? row.goals?.home;
+  const ftAway = row.score?.fulltime?.away ?? row.goals?.away;
+  const finished = FT_STATUS.has(status);
+  if (finished && (ftHome == null || ftAway == null)) return null;
+  if (!finished && (row.goals?.home == null || row.goals?.away == null)) {
+    return {
+      fixtureId: row.fixture.id,
+      homeTeam,
+      awayTeam,
+      home: 0,
+      away: 0,
+      finished: false,
+      status,
+    };
+  }
+
+  return {
+    fixtureId: row.fixture.id,
+    homeTeam,
+    awayTeam,
+    home: Number(ftHome ?? row.goals?.home ?? 0),
+    away: Number(ftAway ?? row.goals?.away ?? 0),
+    finished,
+    status,
+  };
+}
+
+/**
+ * All fixtures for a UTC date with scores/status.
+ * One API call per date; FT-heavy days cached 6h, otherwise ~3 min.
+ */
+export async function fetchApiFootballScoresByDate(
+  date: string
+): Promise<ApiFootballScore[]> {
+  const cached = scoresByDate.get(date);
+  const ttlMs = cached?.allFinished ? 6 * 60 * 60 * 1000 : 3 * 60 * 1000;
+  if (cached && Date.now() - cached.savedAt < ttlMs) {
+    return cached.rows;
+  }
+
+  if (isApiFootballProviderPaused()) {
+    return cached?.rows ?? [];
+  }
+
+  try {
+    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { date });
+    const parsed = (rows ?? [])
+      .map(parseScoreRow)
+      .filter((r): r is ApiFootballScore => r != null);
+    const finished = parsed.filter((r) => r.finished);
+    const allFinished =
+      parsed.length > 0 && finished.length === parsed.length;
+    scoresByDate.set(date, {
+      savedAt: Date.now(),
+      allFinished,
+      rows: parsed,
+    });
+    return parsed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[api-football] scores date=${date} failed:`,
+      msg.slice(0, 160)
+    );
+    return cached?.rows ?? [];
+  }
+}
+
 /** Smoke check — status + remaining quota headers. */
 export async function pingApiFootball(): Promise<{
   ok: boolean;

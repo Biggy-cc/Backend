@@ -138,7 +138,7 @@ function buildPublishBundle(bundles: MatchBundle[]): DailyPicksBundle {
 }
 
 /**
- * Phase 1 — publish a bettable card from TxLINE odds (~5s).
+ * Phase 1 — publish a bettable card from live odds (~5s).
  * No LLM. Saves to D1 immediately so the bot can serve on read.
  */
 export async function publishDailyCard(
@@ -204,7 +204,7 @@ export async function publishDailyCard(
     return publishFromCarryForward(pickDate);
   }
 
-  const changeNote = "Today's card — live TxLINE lines.";
+  const changeNote = "Today's card — live pre-match lines.";
   console.log(`[publish] Saving ${pickDate} from ${allowedMatches.join(", ")}`);
 
   return persistPickBundle(pickDate, bundle, { version: 1, changeNote });
@@ -214,7 +214,7 @@ export async function hasPublishedCard(pickDate: string): Promise<boolean> {
   return (await cachedPicks(pickDate)) != null;
 }
 
-/** Upcoming WC fixtures that currently have TxLINE odds. */
+/** Upcoming fixtures that currently have priced odds. */
 export async function fixturesWithLiveOdds(): Promise<string[]> {
   const bundles = await loadPublishBundles();
   return bundles.map((b) => fixtureLabel(b.fixture));

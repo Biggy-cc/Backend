@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { getBot } from "../bot/index.js";
 import { isApiFootballFreeQuotaMode } from "../api-football/config.js";
+import { refreshTrackRecordInBackground } from "../api/track-record.js";
 import { getFootballDataProvider } from "../providers/football.js";
 import { runDailyDrop, runRefreshPicks } from "./daily-drop.js";
 import { runNewsBroadcast } from "./news-broadcast.js";
@@ -48,6 +49,15 @@ export function startScheduler() {
       console.error("[social] Win check failed:", err);
     }
   });
+
+  // Keep /api/track-record warm — never recompute on the request path.
+  const trackRecordSchedule =
+    process.env.TRACK_RECORD_CRON ?? "5,35 * * * *";
+  cron.schedule(trackRecordSchedule, () => {
+    refreshTrackRecordInBackground();
+  });
+  // Warm once shortly after boot
+  setTimeout(() => refreshTrackRecordInBackground(), 15_000);
 
   // Free API-Football: ~8 watches/day (fresh enough, ~2–4 odds calls each when card exists)
   // Paid / TxLINE: every 30m unless overridden

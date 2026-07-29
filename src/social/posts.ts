@@ -1,18 +1,16 @@
 import type { Bot } from "grammy";
 import {
+  isApiFootballConfigured,
+  loadApiFootballScoresForLegs,
+  type ApiFootballLegScore,
+} from "../api-football/results.js";
+import { invalidateTrackRecordCache } from "../api/track-record.js";
+import {
   gradeLegWithScore,
   matchScore,
   normalizeMatchKey,
   type PickLeg,
 } from "../picks/grading.js";
-import {
-  isHighlightlyConfigured,
-  isHighlightlyFinished,
-  isHighlightlyPaused,
-  loadHighlightlyMatchesForLegs,
-  scoreForPickLabel,
-  type HighlightlyMatch,
-} from "../highlightly/client.js";
 import { loadStoredBatch } from "../picks/store.js";
 import { todayPickDate } from "../picks/generate.js";
 import type { PickTier } from "../picks/types.js";
@@ -24,12 +22,9 @@ import { isXConfigured, postTweet } from "./x-client.js";
 
 function gradeLegForSocial(
   leg: PickLeg,
-  hl: HighlightlyMatch | undefined
+  af: ApiFootballLegScore | undefined
 ): boolean | null {
-  if (hl && isHighlightlyFinished(hl)) {
-    const score = scoreForPickLabel(leg.match, hl);
-    if (score) return gradeLegWithScore(leg, score);
-  }
+  if (af) return gradeLegWithScore(leg, af);
   const manual = matchScore(leg.match);
   if (manual) return gradeLegWithScore(leg, manual);
   return null;
@@ -103,8 +98,8 @@ export async function postPickUpdate(
 type WonLeg = { pickDate: string; tier: PickTier; leg: PickLeg; scoreLine?: string };
 
 async function findNewWonLegs(): Promise<WonLeg[]> {
-  if (isHighlightlyPaused()) {
-    console.log("[social] Highlightly paused — skip win check");
+  if (!isApiFootballConfigured()) {
+    console.log("[social] API-Football not configured — skip win check");
     return [];
   }
 
@@ -126,27 +121,25 @@ async function findNewWonLegs(): Promise<WonLeg[]> {
         labels.add(leg.match);
       }
     }
+    if (labels.size === 0) continue;
 
-    const hlMap = isHighlightlyConfigured()
-      ? await loadHighlightlyMatchesForLegs(date, [...labels])
-      : new Map<string, HighlightlyMatch>();
+    const afMap = await loadApiFootballScoresForLegs(date, [...labels]);
 
     for (const tier of ["hit", "aim", "go_big"] as PickTier[]) {
       for (const leg of batch.picks[tier]?.legs ?? []) {
-        const hl = hlMap.get(normalizeMatchKey(leg.match));
-        const grade = gradeLegForSocial(leg, hl);
+        const af = afMap.get(normalizeMatchKey(leg.match));
+        const grade = gradeLegForSocial(leg, af);
         if (grade !== true) continue;
 
         const key = legDedupKey("leg_win", date, leg);
         if (await wasPosted(key)) continue;
 
-        let scoreLine: string | undefined;
-        if (hl && isHighlightlyFinished(hl)) {
-          const s = scoreForPickLabel(leg.match, hl);
-          if (s) scoreLine = `${s.home}-${s.away}`;
-        }
-
-        won.push({ pickDate: date, tier, leg, scoreLine });
+        won.push({
+          pickDate: date,
+          tier,
+          leg,
+          scoreLine: af ? `${af.home}-${af.away}` : undefined,
+        });
       }
     }
   }
@@ -171,6 +164,7 @@ export async function postNewWins(bot: Bot | null = null): Promise<number> {
   }
 
   if (sent > 0) {
+    invalidateTrackRecordCache();
     console.log(`[social] Dispatched ${sent} win post(s) (${isSocialAutoMode() ? "auto" : "manual"})`);
   }
   return sent;

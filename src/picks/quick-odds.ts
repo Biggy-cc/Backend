@@ -83,7 +83,7 @@ export async function tryQuickOddsCard(
     return null;
   }
 
-  const changeNote = "Today's card — built from live TxLINE odds.";
+  const changeNote = "Today's card — built from live pre-match odds.";
   console.log(`[picks] Quick odds card for ${pickDate} (${upcoming.map(fixtureLabel).join(", ")})`);
 
   return persistPickBundle(pickDate, bundle, {

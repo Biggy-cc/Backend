@@ -1,5 +1,5 @@
 import type { Bot } from "grammy";
-import { isHighlightlyPaused } from "../highlightly/client.js";
+import { isApiFootballProviderPaused } from "../api-football/client.js";
 import {
   buildLiveFeedHtml,
   buildLivePitchBlock,
@@ -197,7 +197,7 @@ async function tickSession(bot: Bot, session: LiveWatchSession): Promise<void> {
     return;
   }
 
-  if (isHighlightlyPaused()) {
+  if (isApiFootballProviderPaused()) {
     return;
   }
 

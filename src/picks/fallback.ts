@@ -672,7 +672,7 @@ export function buildMinimalOddsBundle(bundles: Bundle[]): DailyPicksBundle | nu
   return {
     dailyThesis: matches.map((match) => ({
       match,
-      summary: `Pre-match lines from TxLINE for ${match}.`,
+      summary: `Pre-match lines for ${match}.`,
       winnerLean: match.split(" vs ")[0]?.trim() ?? match,
       goalsLean: "medium" as const,
       bttsLean: "neutral" as const,

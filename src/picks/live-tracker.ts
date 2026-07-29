@@ -1,11 +1,8 @@
 import {
-  findHighlightlyMatch,
-  highlightlyLiveState,
-  isHighlightlyConfigured,
-  loadHighlightlyMatchesForLegs,
-  scoreForPickLabel,
-  type HighlightlyMatch,
-} from "../highlightly/client.js";
+  isApiFootballConfigured,
+  loadApiFootballLiveForLegs,
+  type ApiFootballLiveLeg,
+} from "../api-football/results.js";
 import { loadStoredBatch } from "./store.js";
 import {
   evaluateLegProgress,
@@ -47,27 +44,23 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function legStateFromHighlightly(
+function legStateFromApiFootball(
   leg: PickLeg,
-  hl: HighlightlyMatch,
+  af: ApiFootballLiveLeg,
   thesis: MatchThesis | null
 ): LegLiveState {
-  const live = highlightlyLiveState(hl);
-  const score =
-    scoreForPickLabel(leg.match, hl) ??
-    (live.score ? scoreForPickLabel(`${hl.homeTeam.name} vs ${hl.awayTeam.name}`, hl) : null);
-
+  const score = { home: af.home, away: af.away };
   const progress =
-    score && live.phase !== "pre"
-      ? evaluateLegProgress(leg, score, live.phase === "ft" ? "ft" : "live")
+    af.phase !== "pre"
+      ? evaluateLegProgress(leg, score, af.phase === "ft" ? "ft" : "live")
       : null;
 
   return {
     leg,
     matchLabel: leg.match,
-    phase: live.phase,
-    scoreLine: score ? `${score.home}-${score.away}` : null,
-    clock: live.clock,
+    phase: af.phase,
+    scoreLine: af.phase === "pre" ? null : `${af.home}-${af.away}`,
+    clock: af.clock,
     progress,
     thesis,
   };
@@ -95,7 +88,7 @@ function legStateFromSettled(
 export async function buildLegLiveStates(
   pickDate: string,
   tier: PickTier,
-  options: { fresh?: boolean } = {}
+  _options: { fresh?: boolean } = {}
 ): Promise<LegLiveState[]> {
   const batch = await loadStoredBatch(pickDate);
   if (!batch) return [];
@@ -108,19 +101,20 @@ export async function buildLegLiveStates(
   );
 
   const matchLabels = slip.legs.map((l) => l.match);
-  const hlByLeg = isHighlightlyConfigured()
-    ? await loadHighlightlyMatchesForLegs(pickDate, matchLabels, { fresh: options.fresh })
-    : new Map<string, HighlightlyMatch>();
+  // API-Football only — Highlightly was burning free tier and wedging the API.
+  const afByLeg = isApiFootballConfigured()
+    ? await loadApiFootballLiveForLegs(pickDate, matchLabels)
+    : new Map<string, ApiFootballLiveLeg>();
 
   const states: LegLiveState[] = [];
 
   for (const leg of slip.legs) {
     const matchKey = normalizeMatchKey(leg.match);
     const thesis = thesisByMatch.get(normalizeMatchName(leg.match)) ?? null;
-    const hl = hlByLeg.get(matchKey);
+    const af = afByLeg.get(matchKey);
 
-    if (hl) {
-      states.push(legStateFromHighlightly(leg, hl, thesis));
+    if (af) {
+      states.push(legStateFromApiFootball(leg, af, thesis));
       continue;
     }
 
@@ -135,7 +129,7 @@ export async function buildLegLiveStates(
       matchLabel: leg.match,
       phase: "pre",
       scoreLine: null,
-      clock: isHighlightlyConfigured() ? "Awaiting live feed" : "Scheduled",
+      clock: isApiFootballConfigured() ? "Awaiting kickoff" : "Scheduled",
       progress: null,
       thesis,
     });
@@ -163,7 +157,7 @@ export type LiveSectionOptions = {
 export type LivePanelOptions = {
   autoWatch?: boolean;
   tier?: PickTier;
-  /** Bypass Highlightly cache — used by the 60s live poller. */
+  /** Bypass score cache — reserved; API-Football uses its own short TTL. */
   fresh?: boolean;
 };
 
