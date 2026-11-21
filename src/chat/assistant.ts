@@ -35,6 +35,9 @@ export type ProposedParlay = {
     away: string;
     selection: string;
     kickoffAt: string;
+    fixtureId?: string;
+    homeLogo?: string;
+    awayLogo?: string;
   }>;
 };
 
@@ -430,7 +433,7 @@ export async function askBiggy(
             return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. Correct the proposal or explain what is unavailable." }) };
           }
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
-          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ ...leg, home: matching[i]!.home.name, away: matching[i]!.away.name, kickoffAt: matching[i]!.kickoffAt })) };
+          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl })) };
           return {
             type: "function_call_output",
             call_id: call.call_id,

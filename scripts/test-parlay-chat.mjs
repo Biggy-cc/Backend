@@ -11,7 +11,7 @@ process.env.OPENAI_API_KEY = "test-only";
 const kickoff = Math.floor((Date.now() + 86_400_000) / 1000);
 const { setCachedFixtures } = await import("../dist/api-football/cache.js");
 setCachedFixtures([
-  { FixtureId: 41, Participant1: "Alpha", Participant2: "Beta", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
+  { FixtureId: 41, Participant1: "Alpha", Participant2: "Beta", Participant1Logo: "https://example.test/alpha.png", Participant2Logo: "https://example.test/beta.png", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
   { FixtureId: 42, Participant1: "Gamma", Participant2: "Delta", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
 ]);
 let researchCalls = 0;
@@ -41,6 +41,9 @@ const { askBiggy } = await import("../dist/chat/assistant.js");
 const answer = await askBiggy("Help me build a balanced, researched parlay", [], "Europe/Berlin", undefined, true, async () => true);
 assert.equal(answer.parlay?.legs.length, 2);
 assert.equal(answer.parlay.legs[0].kickoffAt, new Date(kickoff * 1000).toISOString(), "kickoff must come from verified fixture");
+assert.equal(answer.parlay.legs[0].fixtureId, "41", "fixture ID must come from verified data");
+assert.equal(answer.parlay.legs[0].homeLogo, "https://example.test/alpha.png", "home crest must come from verified data");
+assert.equal(answer.parlay.legs[0].awayLogo, "https://example.test/beta.png", "away crest must come from verified data");
 assert.equal(researchCalls, 2, "each fixture uses one research request");
 let invalidRound = 0;
 globalThis.fetch = async (_url, options) => {
