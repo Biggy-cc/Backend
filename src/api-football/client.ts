@@ -46,6 +46,53 @@ type ApiTeamSearchRow = {
   team: { id: number; name: string; logo?: string; country?: string };
 };
 
+type ApiLeagueRow = {
+  league: { id: number; name: string; type?: string; logo?: string };
+  country: { name?: string; code?: string; flag?: string };
+  seasons?: Array<{ year: number; current?: boolean }>;
+};
+
+type ApiStandingRow = {
+  rank: number;
+  team: { id: number; name: string; logo?: string };
+  points: number;
+  goalsDiff: number;
+  form?: string;
+  all: { played: number; win: number; draw: number; lose: number; goals?: { for?: number; against?: number } };
+};
+
+type ApiStandingsResponse = {
+  league?: { id: number; name: string; country?: string; season: number; standings?: ApiStandingRow[][] };
+};
+
+export type ApiFootballLeague = {
+  id: number;
+  name: string;
+  country: string;
+  logo?: string;
+  flag?: string;
+  season: number;
+};
+
+export type ApiFootballStanding = {
+  rank: number;
+  teamId: number;
+  team: string;
+  logo?: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+  form?: string;
+};
+
+let currentLeaguesCache: { savedAt: number; leagues: ApiFootballLeague[] } | null = null;
+const standingsCache = new Map<string, { savedAt: number; rows: ApiFootballStanding[] }>();
+
 type ApiAnalysisFixtureRow = ApiFixtureRow & {
   goals?: { home: number | null; away: number | null };
 };
@@ -232,6 +279,72 @@ async function resolveApiFootballTeam(teamName: string): Promise<ApiTeamSearchRo
   return (candidates ?? []).find((row) => row.team.name.toLowerCase() === query)
     ?? candidates?.[0]
     ?? null;
+}
+
+export async function fetchApiFootballCurrentLeagues(): Promise<ApiFootballLeague[]> {
+  if (currentLeaguesCache && Date.now() - currentLeaguesCache.savedAt < 12 * 60 * 60 * 1000) {
+    return currentLeaguesCache.leagues;
+  }
+  const rows = await apiGet<ApiLeagueRow[]>("/leagues", { current: "true" });
+  const leagues = (rows ?? []).flatMap((row) => {
+    const season = row.seasons?.find((item) => item.current)?.year;
+    if (!season || row.league.type === "Cup") return [];
+    return [{
+      id: row.league.id,
+      name: row.league.name,
+      country: row.country.name ?? "International",
+      logo: row.league.logo,
+      flag: row.country.flag,
+      season,
+    }];
+  });
+  currentLeaguesCache = { savedAt: Date.now(), leagues };
+  return leagues;
+}
+
+export async function fetchApiFootballStandings(
+  leagueId: number,
+  season: number
+): Promise<ApiFootballStanding[]> {
+  const key = `${leagueId}:${season}`;
+  const cached = standingsCache.get(key);
+  if (cached && Date.now() - cached.savedAt < 10 * 60 * 1000) return cached.rows;
+  const response = await apiGet<ApiStandingsResponse[]>("/standings", { league: leagueId, season });
+  const table = response?.[0]?.league?.standings?.[0] ?? [];
+  const rows = table.map((row) => ({
+    rank: row.rank,
+    teamId: row.team.id,
+    team: row.team.name,
+    logo: row.team.logo,
+    played: row.all.played,
+    won: row.all.win,
+    drawn: row.all.draw,
+    lost: row.all.lose,
+    goalsFor: row.all.goals?.for ?? 0,
+    goalsAgainst: row.all.goals?.against ?? 0,
+    goalDifference: row.goalsDiff,
+    points: row.points,
+    form: row.form,
+  }));
+  standingsCache.set(key, { savedAt: Date.now(), rows });
+  return rows;
+}
+
+export async function fetchApiFootballTeamStanding(teamName: string) {
+  const team = await resolveApiFootballTeam(teamName);
+  if (!team?.team.id) return null;
+  const leagues = await apiGet<ApiLeagueRow[]>("/leagues", { team: team.team.id, current: "true" });
+  const preferred = (leagues ?? []).find((row) => row.league.type !== "Cup" && row.seasons?.some((season) => season.current));
+  const season = preferred?.seasons?.find((item) => item.current)?.year;
+  if (!preferred || !season) return null;
+  const standings = await fetchApiFootballStandings(preferred.league.id, season);
+  const standing = standings.find((row) => row.teamId === team.team.id);
+  return standing ? {
+    league: preferred.league.name,
+    country: preferred.country.name,
+    season,
+    standing,
+  } : null;
 }
 
 function compactAnalysisFixture(row: ApiAnalysisFixtureRow, perspectiveTeamId?: number) {

@@ -10,6 +10,7 @@ import { proxySolanaRpc } from "./solana-rpc.js";
 import type { TelegramLoginPayload } from "./telegram-auth.js";
 import { askBiggy } from "../chat/assistant.js";
 import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
+import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -106,6 +107,35 @@ export function startApiServer(port: number) {
       } catch (err) {
         console.error("[api] /api/matches-today failed:", err);
         sendJson(res, 502, { error: "Could not load today's matches" });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/leagues") {
+      try {
+        const leagues = await getLeaguesPayload();
+        sendJson(res, 200, { leagues }, { "Cache-Control": "public, max-age=21600" });
+      } catch (err) {
+        console.error("[api] /api/leagues failed:", err);
+        sendJson(res, 502, { error: "Could not load leagues" });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/standings") {
+      try {
+        const requestUrl = new URL(req.url ?? "/", "http://localhost");
+        const leagueId = Number(requestUrl.searchParams.get("league"));
+        const season = Number(requestUrl.searchParams.get("season"));
+        if (!Number.isInteger(leagueId) || !Number.isInteger(season)) {
+          sendJson(res, 400, { error: "Valid league and season are required" });
+          return;
+        }
+        const standings = await getStandingsPayload(leagueId, season);
+        sendJson(res, 200, { standings }, { "Cache-Control": "public, max-age=300" });
+      } catch (err) {
+        console.error("[api] /api/standings failed:", err);
+        sendJson(res, 502, { error: "Could not load standings" });
       }
       return;
     }

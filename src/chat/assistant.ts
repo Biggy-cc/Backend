@@ -4,6 +4,7 @@ import { getLiveScoresPayload } from "../api/live-scores.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballNextFixturesForTeam,
+  fetchApiFootballTeamStanding,
 } from "../api-football/client.js";
 
 type ResponseItem = {
@@ -56,6 +57,18 @@ const TOOLS = [
       properties: {
         team: { type: "string", description: "Full or common club name, for example Manchester United." },
       },
+      required: ["team"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "get_team_standing",
+    description: "Get a named club's current domestic league position, points, record, goal difference and recent form.",
+    parameters: {
+      type: "object",
+      properties: { team: { type: "string" } },
       required: ["team"],
       additionalProperties: false,
     },
@@ -170,6 +183,12 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
     return await fetchApiFootballNextFixturesForTeam(parsed.team.trim(), 5)
       ?? { error: `No team found for ${parsed.team}` };
   }
+  if (name === "get_team_standing") {
+    const parsed = JSON.parse(rawArguments || "{}") as { team?: string };
+    if (!parsed.team?.trim()) return { error: "Team name is required" };
+    return await fetchApiFootballTeamStanding(parsed.team.trim())
+      ?? { error: `No current league standing found for ${parsed.team}` };
+  }
   if (name === "analyze_match") {
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
     if (!parsed.home?.trim() || !parsed.away?.trim()) return { error: "Both teams are required" };
@@ -199,6 +218,7 @@ export async function askBiggy(
       "You are Biggy, a concise and friendly football assistant.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
+      "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
       "You MUST use analyze_match before giving a prediction, betting lean, score estimate, form comparison, or matchup analysis.",
       "Base any prediction on the returned recent form, head-to-head and injury data. State the evidence briefly; never give a naked guess or generic disclaimer.",
       "Use the supplied tools whenever the user asks about current fixtures, scores, or a Biggy parlay.",
