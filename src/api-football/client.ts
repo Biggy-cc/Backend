@@ -668,6 +668,9 @@ export type ApiFootballScore = {
   competition?: string;
   homeLogo?: string;
   awayLogo?: string;
+  kickoffAt?: string;
+  competitionCountry?: string;
+  scoreAvailable: boolean;
 };
 
 type ApiFixtureScoreRow = {
@@ -685,7 +688,7 @@ type ApiFixtureScoreRow = {
     fulltime?: { home: number | null; away: number | null };
     penalty?: { home: number | null; away: number | null };
   };
-  league?: { name?: string };
+  league?: { name?: string; country?: string };
 };
 
 const FT_STATUS = new Set(["FT", "AET", "PEN", "AWD", "WO"]);
@@ -723,6 +726,9 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
       competition: row.league?.name,
       homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
       awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
+      kickoffAt: row.fixture.date,
+      competitionCountry: row.league?.country,
+      scoreAvailable: false,
     };
   }
 
@@ -738,6 +744,9 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     competition: row.league?.name,
     homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
     awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
+    kickoffAt: row.fixture.date,
+    competitionCountry: row.league?.country,
+    scoreAvailable: true,
   };
 }
 

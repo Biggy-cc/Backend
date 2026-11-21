@@ -1,4 +1,7 @@
-import { fetchApiFootballLiveScores } from "../api-football/client.js";
+import {
+  fetchApiFootballLiveScores,
+  fetchApiFootballScoresByDate,
+} from "../api-football/client.js";
 import { isApiFootballConfigured } from "../api-football/results.js";
 
 const LIVE_STATUSES = new Set(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]);
@@ -15,6 +18,16 @@ export type LiveScoreApiItem = {
   homeLogo?: string;
   awayLogo?: string;
 };
+
+export type TodayScoreApiItem = LiveScoreApiItem & {
+  kickoffAt?: string;
+  country?: string;
+  phase: "scheduled" | "live" | "finished" | "other";
+  scoreAvailable: boolean;
+};
+
+const FINISHED_STATUSES = new Set(["FT", "AET", "PEN", "AWD", "WO"]);
+const SCHEDULED_STATUSES = new Set(["NS", "TBD"]);
 
 function clockFor(status: string, elapsed?: number): string {
   if (status === "HT") return "HT";
@@ -43,4 +56,35 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
       homeLogo: row.homeLogo,
       awayLogo: row.awayLogo,
     }));
+}
+
+export async function getTodayScoresPayload(date: string): Promise<TodayScoreApiItem[]> {
+  if (!isApiFootballConfigured()) return [];
+  const scores = await fetchApiFootballScoresByDate(date);
+  return scores.map((row) => {
+    const status = row.status.toUpperCase();
+    const phase = LIVE_STATUSES.has(status)
+      ? "live"
+      : FINISHED_STATUSES.has(status)
+        ? "finished"
+        : SCHEDULED_STATUSES.has(status)
+          ? "scheduled"
+          : "other";
+    return {
+      id: String(row.fixtureId),
+      home: row.homeTeam,
+      away: row.awayTeam,
+      homeScore: row.home,
+      awayScore: row.away,
+      status,
+      clock: phase === "live" ? clockFor(status, row.elapsed) : phase === "finished" ? "FT" : status,
+      competition: row.competition,
+      homeLogo: row.homeLogo,
+      awayLogo: row.awayLogo,
+      kickoffAt: row.kickoffAt,
+      country: row.competitionCountry,
+      phase,
+      scoreAvailable: row.scoreAvailable,
+    };
+  });
 }

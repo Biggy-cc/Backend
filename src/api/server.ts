@@ -9,7 +9,7 @@ import { getTelegramBotInfo } from "./telegram-bot.js";
 import { proxySolanaRpc } from "./solana-rpc.js";
 import type { TelegramLoginPayload } from "./telegram-auth.js";
 import { askBiggy } from "../chat/assistant.js";
-import { getLiveScoresPayload } from "./live-scores.js";
+import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -83,6 +83,29 @@ export function startApiServer(port: number) {
       } catch (err) {
         console.error("[api] /api/live-scores failed:", err);
         sendJson(res, 502, { error: "Could not load live scores" });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/matches-today") {
+      try {
+        const requestUrl = new URL(req.url ?? "/", "http://localhost");
+        const requestedDate = requestUrl.searchParams.get("date") ?? "";
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
+          ? requestedDate
+          : new Date().toISOString().slice(0, 10);
+        const matches = await Promise.race([
+          getTodayScoresPayload(date),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("today matches timeout")), 12_000)
+          ),
+        ]);
+        sendJson(res, 200, { date, matches, asOf: new Date().toISOString() }, {
+          "Cache-Control": "public, max-age=20",
+        });
+      } catch (err) {
+        console.error("[api] /api/matches-today failed:", err);
+        sendJson(res, 502, { error: "Could not load today's matches" });
       }
       return;
     }
