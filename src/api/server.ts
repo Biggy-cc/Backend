@@ -8,6 +8,7 @@ import { serveTelegramAvatar } from "./telegram-avatar.js";
 import { getTelegramBotInfo } from "./telegram-bot.js";
 import { proxySolanaRpc } from "./solana-rpc.js";
 import type { TelegramLoginPayload } from "./telegram-auth.js";
+import { askBiggy } from "../chat/assistant.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -63,6 +64,27 @@ export function startApiServer(port: number) {
       } catch (err) {
         console.error("[api] /api/fixtures failed:", err);
         sendJson(res, 502, { error: "Could not load fixtures" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/chat") {
+      try {
+        if (!process.env.OPENAI_API_KEY?.trim()) {
+          sendJson(res, 503, { error: "Biggy AI is not configured yet" });
+          return;
+        }
+        const body = await readJsonBody<{ message?: string }>(req);
+        const message = body.message?.trim() ?? "";
+        if (!message || message.length > 1_000) {
+          sendJson(res, 400, { error: "Message must be between 1 and 1,000 characters" });
+          return;
+        }
+        const result = await askBiggy(message);
+        sendJson(res, 200, result, { "Cache-Control": "no-store" });
+      } catch (err) {
+        console.error("[api] POST /api/chat failed:", err);
+        sendJson(res, 502, { error: "Biggy could not answer right now" });
       }
       return;
     }

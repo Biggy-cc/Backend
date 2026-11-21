@@ -1,9 +1,10 @@
 import { createGeminiClient, extractJson, geminiGenerateJson } from "./gemini.js";
 
-export type LlmProvider = "gemini" | "openrouter" | "groq";
+export type LlmProvider = "openai" | "gemini" | "openrouter" | "groq";
 
 export function configuredLlmProviders(): LlmProvider[] {
   const out: LlmProvider[] = [];
+  if (process.env.OPENAI_API_KEY?.trim()) out.push("openai");
   if (process.env.GEMINI_API_KEY) out.push("gemini");
   if (process.env.OPENROUTER_API_KEY?.trim()) out.push("openrouter");
   if (process.env.GROQ_API_KEY) out.push("groq");
@@ -43,6 +44,56 @@ type OpenAiChatResponse = {
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 };
+
+type OpenAiResponse = {
+  output_text?: string;
+  output?: Array<{
+    type?: string;
+    content?: Array<{ type?: string; text?: string }>;
+  }>;
+  error?: { message?: string };
+};
+
+function openAiResponseText(body: OpenAiResponse): string {
+  const direct = body.output_text?.trim();
+  if (direct) return direct;
+  return (body.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .filter((part) => part.type === "output_text")
+    .map((part) => part.text ?? "")
+    .join("")
+    .trim();
+}
+
+async function openAiResponses(prompt: string, jsonMode: boolean): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENAI_API_KEY missing");
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
+      input: prompt,
+      reasoning: { effort: process.env.OPENAI_REASONING_EFFORT ?? "none" },
+      max_output_tokens: 1_200,
+      ...(jsonMode
+        ? { text: { format: { type: "json_object" } } }
+        : {}),
+    }),
+  });
+
+  const body = (await res.json()) as OpenAiResponse;
+  if (!res.ok) {
+    throw new Error(body.error?.message ?? `OpenAI HTTP ${res.status}`);
+  }
+  const text = openAiResponseText(body);
+  if (!text) throw new Error("OpenAI returned an empty response");
+  return text;
+}
 
 async function openAiCompatibleChat(
   url: string,
@@ -128,6 +179,13 @@ type ProviderAttempt = { provider: LlmProvider; run: () => Promise<string> };
 function providerAttempts(prompt: string, jsonMode: boolean): ProviderAttempt[] {
   const attempts: ProviderAttempt[] = [];
 
+  if (process.env.OPENAI_API_KEY?.trim()) {
+    attempts.push({
+      provider: "openai",
+      run: () => openAiResponses(prompt, jsonMode),
+    });
+  }
+
   if (process.env.GEMINI_API_KEY) {
     attempts.push({
       provider: "gemini",
@@ -166,7 +224,7 @@ async function runWithProviderFallback(
   const attempts = providerAttempts(prompt, jsonMode);
   if (attempts.length === 0) {
     throw new Error(
-      "No LLM configured — set GEMINI_API_KEY, OPENROUTER_API_KEY, and/or GROQ_API_KEY"
+      "No LLM configured — set OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, and/or GROQ_API_KEY"
     );
   }
 
