@@ -219,10 +219,22 @@ export async function askBiggy(
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
+  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message);
+  let forcedProposal = false;
   let response = await callOpenAi({ ...base, input });
   for (let round = 0; round < 3; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {
+      if (requiresParlayApproval && !proposedParlay && !forcedProposal) {
+        forcedProposal = true;
+        response = await callOpenAi({
+          ...base,
+          previous_response_id: response.id,
+          input: "Now convert your researched recommendation into the required approval proposal. Call propose_parlay_for_approval; do not answer with prose only.",
+          tool_choice: { type: "function", name: "propose_parlay_for_approval" },
+        });
+        continue;
+      }
       const answer = extractText(response);
       if (!answer) throw new Error("OpenAI returned an empty answer");
       return { answer, model, ...(proposedParlay ? { parlay: proposedParlay } : {}) };
