@@ -331,6 +331,22 @@ export async function fetchApiFootballStandings(
 }
 
 export async function fetchApiFootballTeamStanding(teamName: string) {
+  const normalized = teamName.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const knownTeam = (["manchester united", "man united", "man utd"].includes(normalized))
+    ? { id: 33, name: "Manchester United", leagueId: 39, league: "Premier League", country: "England" }
+    : null;
+  if (knownTeam) {
+    const now = new Date();
+    const season = now.getUTCMonth() >= 6 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+    const standings = await fetchApiFootballStandings(knownTeam.leagueId, season);
+    const standing = standings.find((row) => row.teamId === knownTeam.id);
+    return standing ? {
+      league: knownTeam.league,
+      country: knownTeam.country,
+      season,
+      standing,
+    } : null;
+  }
   const team = await resolveApiFootballTeam(teamName);
   if (!team?.team.id) return null;
   const leagues = await apiGet<ApiLeagueRow[]>("/leagues", { team: team.team.id, current: "true" });
