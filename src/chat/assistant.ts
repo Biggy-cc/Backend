@@ -235,6 +235,9 @@ export async function askBiggy(
   timezone = "UTC"
 ): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
+  const requiresRecentResults =
+    /\b(?:last|previous|recent)\b/i.test(message) &&
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|match(?:es)?|game(?:s)?|result(?:s)?)\b/i.test(message);
   const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
   const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
@@ -290,7 +293,13 @@ export async function askBiggy(
   ];
   let proposedParlay: ProposedParlay | undefined;
   let forcedProposal = false;
-  let response = await callOpenAi({ ...base, input });
+  let response = await callOpenAi({
+    ...base,
+    input,
+    ...(requiresRecentResults
+      ? { tool_choice: { type: "function", name: "get_team_results" } }
+      : {}),
+  });
   for (let round = 0; round < 5; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {
