@@ -595,7 +595,9 @@ function findTierCombo(
   combinedMax: number,
   tier?: PickTier
 ): SimpleLeg[] | null {
-  const legs = pools.flat();
+  // Keep the search bounded: large bookmaker boards can otherwise generate
+  // millions of combinations and block the same event loop serving the API.
+  const legs = pools.flatMap((pool) => pool.slice(0, 4)).slice(0, 32);
   if (legs.length < legMin) return null;
 
   let best: SimpleLeg[] | null = null;

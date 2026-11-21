@@ -267,6 +267,13 @@ async function apiGet<T>(
         pauseProviderUntil(MINUTE_LIMIT_COOLDOWN_MS, `short-term rate limit on ${path}`);
       }
     }
+    // Axios errors include request headers and socket internals; never pass the
+    // raw object to callers that may log it (it contains the provider key).
+    if (axios.isAxiosError(err)) {
+      const safe = new Error(`API-Football request failed on ${path}${status ? ` (HTTP ${status})` : ""}: ${err.message}`);
+      if (status) Object.assign(safe, { response: { status } });
+      throw safe;
+    }
     throw err;
   }
 }
@@ -595,7 +602,7 @@ export async function fetchApiFootballFixtures(): Promise<TxlineFixture[]> {
             }
           }
         } catch (err) {
-          console.warn(`[api-football] fixtures date=${date} failed:`, err);
+          console.warn(`[api-football] fixtures date=${date} failed:`, err instanceof Error ? err.message : String(err));
         }
       }
       // Free: keep the full date window so /odds?date= can resolve team names.
@@ -621,12 +628,12 @@ export async function fetchApiFootballFixtures(): Promise<TxlineFixture[]> {
             if (isUpcomingStatus(row.fixture.status?.short)) rows.push(row);
           }
         } catch (err) {
-          console.warn(`[api-football] fixtures league=${leagueId} failed:`, err);
+          console.warn(`[api-football] fixtures league=${leagueId} failed:`, err instanceof Error ? err.message : String(err));
         }
       }
     }
   } catch (err) {
-    console.warn("[api-football] fixtures fetch failed:", err);
+    console.warn("[api-football] fixtures fetch failed:", err instanceof Error ? err.message : String(err));
     const stale = getCachedFixtures(Number.POSITIVE_INFINITY);
     if (stale?.length) {
       console.warn("[api-football] serving stale fixtures cache");
@@ -726,7 +733,7 @@ export async function fetchApiFootballOddsByDate(
       markOddsDateFetched(date);
       return new Set();
     }
-    console.warn(`[api-football] odds date=${date} failed:`, err);
+    console.warn(`[api-football] odds date=${date} failed:`, err instanceof Error ? err.message : String(err));
     return new Set();
   }
 }
