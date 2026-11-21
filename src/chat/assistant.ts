@@ -1,5 +1,6 @@
 import { getUpcomingFixturesPayload } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
+import { getLiveScoresPayload } from "../api/live-scores.js";
 
 type ResponseItem = {
   type?: string;
@@ -17,6 +18,13 @@ type OpenAiResponse = {
 };
 
 const TOOLS = [
+  {
+    type: "function",
+    name: "get_live_scores",
+    description: "Get every football match currently in play with verified scores and match status.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    strict: true,
+  },
   {
     type: "function",
     name: "get_upcoming_matches",
@@ -75,6 +83,9 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
 }
 
 async function runTool(name: string, rawArguments: string | undefined): Promise<unknown> {
+  if (name === "get_live_scores") {
+    return { asOf: new Date().toISOString(), matches: await getLiveScoresPayload() };
+  }
   if (name === "get_upcoming_matches") {
     return { asOf: new Date().toISOString(), fixtures: await getUpcomingFixturesPayload() };
   }
@@ -87,15 +98,21 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
   return { error: "Unknown tool" };
 }
 
-export async function askBiggy(message: string): Promise<{ answer: string; model: string }> {
+export type BiggyChatMessage = { role: "user" | "assistant"; content: string };
+
+export async function askBiggy(
+  message: string,
+  history: BiggyChatMessage[] = []
+): Promise<{ answer: string; model: string }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const base = {
     model,
     instructions: [
       "You are Biggy, a concise and friendly football assistant.",
-      "Use the supplied tools whenever the user asks about current fixtures or a Biggy parlay.",
+      "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
+      "Use the supplied tools whenever the user asks about current fixtures, scores, or a Biggy parlay.",
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
-      "The fixtures tool contains upcoming matches only; say clearly when live or historical data was not supplied.",
+      "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
     ].join(" "),
     tools: TOOLS,
@@ -103,7 +120,11 @@ export async function askBiggy(message: string): Promise<{ answer: string; model
     max_output_tokens: 700,
   };
 
-  let response = await callOpenAi({ ...base, input: message });
+  const input = [
+    ...history.slice(-10).map((item) => ({ role: item.role, content: item.content.slice(0, 2_000) })),
+    { role: "user", content: message },
+  ];
+  let response = await callOpenAi({ ...base, input });
   for (let round = 0; round < 3; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {

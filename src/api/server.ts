@@ -93,13 +93,27 @@ export function startApiServer(port: number) {
           sendJson(res, 503, { error: "Biggy AI is not configured yet" });
           return;
         }
-        const body = await readJsonBody<{ message?: string }>(req);
+        const body = await readJsonBody<{
+          message?: string;
+          history?: Array<{ role?: string; content?: string }>;
+        }>(req);
         const message = body.message?.trim() ?? "";
         if (!message || message.length > 1_000) {
           sendJson(res, 400, { error: "Message must be between 1 and 1,000 characters" });
           return;
         }
-        const result = await askBiggy(message);
+        const history = (body.history ?? [])
+          .filter((item) =>
+            (item.role === "user" || item.role === "assistant") &&
+            typeof item.content === "string" &&
+            item.content.trim().length > 0
+          )
+          .slice(-10)
+          .map((item) => ({
+            role: item.role as "user" | "assistant",
+            content: item.content!.trim().slice(0, 2_000),
+          }));
+        const result = await askBiggy(message, history);
         sendJson(res, 200, result, { "Cache-Control": "no-store" });
       } catch (err) {
         console.error("[api] POST /api/chat failed:", err);
