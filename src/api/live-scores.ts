@@ -41,7 +41,7 @@ function clockFor(status: string, elapsed?: number): string {
 }
 
 export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
-  if (!isApiFootballConfigured()) return [];
+  if (!isApiFootballConfigured()) throw new Error("Football provider is not configured");
   const scores = await fetchApiFootballLiveScores();
   return scores
     .filter((row) => LIVE_STATUSES.has(row.status.toUpperCase()))
@@ -61,7 +61,7 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
 }
 
 export async function getTodayScoresPayload(date: string): Promise<TodayScoreApiItem[]> {
-  if (!isApiFootballConfigured()) return [];
+  if (!isApiFootballConfigured()) throw new Error("Football provider is not configured");
   const [scores, live] = await Promise.all([
     fetchApiFootballScoresByDate(date),
     fetchApiFootballLiveScores(),

@@ -11,6 +11,7 @@ import type { TelegramLoginPayload } from "./telegram-auth.js";
 import { askBiggy } from "../chat/assistant.js";
 import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
 import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
+import { getFootballFeedHealth } from "../api-football/client.js";
 import { randomUUID } from "node:crypto";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
@@ -68,6 +69,11 @@ export function startApiServer(port: number) {
       return;
     }
 
+    if (req.method === "GET" && url === "/api/football-health") {
+      sendJson(res, 200, getFootballFeedHealth(), { "Cache-Control": "no-store" });
+      return;
+    }
+
     if (req.method === "GET" && url === "/api/fixtures") {
       try {
         const fixtures = await Promise.race([
@@ -94,7 +100,7 @@ export function startApiServer(port: number) {
             setTimeout(() => reject(new Error("live scores timeout")), 12_000)
           ),
         ]);
-        sendJson(res, 200, { matches, asOf: new Date().toISOString() }, {
+        sendJson(res, 200, { matches, asOf: getFootballFeedHealth().liveAsOf }, {
           "Cache-Control": "public, max-age=20",
         });
       } catch (err) {
@@ -117,7 +123,8 @@ export function startApiServer(port: number) {
             setTimeout(() => reject(new Error("today matches timeout")), 12_000)
           ),
         ]);
-        sendJson(res, 200, { date, matches, asOf: new Date().toISOString() }, {
+        const health = getFootballFeedHealth(date);
+        sendJson(res, 200, { date, matches, asOf: health.liveAsOf, fixturesAsOf: health.dateAsOf }, {
           "Cache-Control": "public, max-age=20",
         });
       } catch (err) {

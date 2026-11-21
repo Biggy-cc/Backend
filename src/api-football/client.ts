@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance } from "axios";
+import { ProviderRequestQueue } from "./request-queue.js";
 import type { TxlineFixture, TxlineOddsEntry } from "../txline/client.js";
 import {
   getApiFootballCallsToday,
@@ -144,27 +145,19 @@ const recentTeamResultsCache = new Map<
 /** Stop outbound API-Football calls until this time after a provider 429 / daily cap. */
 let providerRateLimitedUntil = 0;
 /** Space provider requests across all consumers, including concurrent chat research. */
-let lastApiFootballCallAt = 0;
-let providerSlot: Promise<void> = Promise.resolve();
 const FREE_MIN_GAP_MS = 7_000;
 const PAID_MIN_GAP_MS = 1_000;
 const MINUTE_LIMIT_COOLDOWN_MS = 65_000;
 
-async function throttleProvider(): Promise<void> {
-  const cfg = getApiFootballConfig();
-  const minimumGap = cfg.quotaMode === "free" ? FREE_MIN_GAP_MS : PAID_MIN_GAP_MS;
-  const slot = providerSlot.then(async () => {
-    const wait = minimumGap - (Date.now() - lastApiFootballCallAt);
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+const providerQueue = new ProviderRequestQueue(
+  () => getApiFootballConfig().quotaMode === "free" ? FREE_MIN_GAP_MS : PAID_MIN_GAP_MS,
+  () => {
     if (isApiFootballProviderPaused()) {
       throw new Error(`API-Football provider rate-limited until ${new Date(providerRateLimitedUntil).toISOString()}`);
     }
     assertBudget(1);
-    lastApiFootballCallAt = Date.now();
-  });
-  providerSlot = slot.catch(() => {});
-  await slot;
-}
+  }
+);
 
 function pauseProviderUntil(msFromNowOrAbsolute: number, reason: string): void {
   const until =
@@ -226,7 +219,8 @@ function assertBudget(need = 1): void {
 
 async function apiGet<T>(
   path: string,
-  params?: Record<string, string | number>
+  params?: Record<string, string | number>,
+  priority = 0
 ): Promise<T> {
   if (Date.now() < providerRateLimitedUntil) {
     throw new Error(
@@ -234,10 +228,11 @@ async function apiGet<T>(
     );
   }
   assertBudget(1);
-  await throttleProvider();
+  await providerQueue.enter(priority, priority > 0 ? 10_000 : 40_000);
   try {
-    const res = await getClient().get<ApiEnvelope<T>>(path, { params });
+    // Count attempts conservatively: timeouts and provider errors may still consume quota.
     recordApiFootballCall(1);
+    const res = await getClient().get<ApiEnvelope<T>>(path, { params });
     const errors = res.data?.errors;
     if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
       const errText = JSON.stringify(errors);
@@ -927,6 +922,22 @@ const scoresByDate = new Map<string, ScoresCacheEntry>();
 let liveScoresCache: { savedAt: number; rows: ApiFootballScore[] } | null = null;
 let liveScoresInFlight: Promise<ApiFootballScore[]> | null = null;
 const scoresByDateInFlight = new Map<string, Promise<ApiFootballScore[]>>();
+
+/** Passive status only: never makes a provider request. Counts are per process. */
+export function getFootballFeedHealth(date?: string) {
+  const now = Date.now();
+  const liveAt = liveScoresCache?.savedAt;
+  const dateAt = date ? scoresByDate.get(date)?.savedAt : undefined;
+  return {
+    configured: !!getApiFootballConfig().apiKey,
+    liveAsOf: liveAt ? new Date(liveAt).toISOString() : null,
+    liveAgeSeconds: liveAt ? Math.floor((now - liveAt) / 1000) : null,
+    dateAsOf: dateAt ? new Date(dateAt).toISOString() : null,
+    providerPausedUntil: isApiFootballProviderPaused() ? new Date(providerRateLimitedUntil).toISOString() : null,
+    queuedRequests: providerQueue.depth,
+    callsTodayThisProcess: getApiFootballCallsToday(),
+  };
+}
 type ApiFixtureEvent = {
   time?: { elapsed?: number | null; extra?: number | null };
   team?: { name?: string };
@@ -1060,7 +1071,7 @@ export async function fetchApiFootballLiveScores(): Promise<ApiFootballScore[]> 
   if (liveScoresInFlight) return liveScoresInFlight;
 
   liveScoresInFlight = (async () => {
-    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { live: "all" });
+    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { live: "all" }, 2);
     const parsed = (rows ?? [])
       .map(parseScoreRow)
       .filter((row): row is ApiFootballScore => row != null);
@@ -1091,7 +1102,7 @@ export async function fetchApiFootballScoresByDate(
   if (inFlight) return inFlight;
 
   const request = (async () => {
-    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { date });
+    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { date }, 1);
     const parsed = (rows ?? [])
       .map(parseScoreRow)
       .filter((r): r is ApiFootballScore => r != null);
