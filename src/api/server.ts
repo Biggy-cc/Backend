@@ -11,6 +11,16 @@ import type { TelegramLoginPayload } from "./telegram-auth.js";
 import { askBiggy } from "../chat/assistant.js";
 import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
 import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
+import { randomUUID } from "node:crypto";
+
+type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
+const chatJobs = new Map<string, ChatJob>();
+
+function isLongParlayTask(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
+  if (/\b(parlay|accumulator|acca)\b/i.test(message)) return true;
+  return /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message)
+    && history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
+}
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -176,12 +186,42 @@ export function startApiServer(port: number) {
             // Keep UTC for invalid or unsupported timezone names.
           }
         }
+        if (isLongParlayTask(message, history)) {
+          const jobId = randomUUID();
+          chatJobs.set(jobId, { status: "working", createdAt: Date.now() });
+          void askBiggy(message, history, timezone).then((result) => {
+            chatJobs.set(jobId, { status: "complete", result, createdAt: Date.now() });
+          }).catch((error) => {
+            console.error(`[api] chat job ${jobId} failed:`, error);
+            chatJobs.set(jobId, { status: "failed", error: "Biggy could not complete the parlay research", createdAt: Date.now() });
+          });
+          sendJson(res, 202, { jobId, status: "working" }, { "Cache-Control": "no-store" });
+          return;
+        }
         const result = await askBiggy(message, history, timezone);
         sendJson(res, 200, result, { "Cache-Control": "no-store" });
       } catch (err) {
         console.error("[api] POST /api/chat failed:", err);
         sendJson(res, 502, { error: "Biggy could not answer right now" });
       }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/chat-job") {
+      const requestUrl = new URL(req.url ?? "/", "http://localhost");
+      const jobId = requestUrl.searchParams.get("id") ?? "";
+      const job = chatJobs.get(jobId);
+      if (!job) {
+        sendJson(res, 404, { error: "Chat job not found" });
+        return;
+      }
+      if (Date.now() - job.createdAt > 10 * 60_000) {
+        chatJobs.delete(jobId);
+        sendJson(res, 410, { error: "Chat job expired" });
+        return;
+      }
+      sendJson(res, 200, job, { "Cache-Control": "no-store" });
+      if (job.status !== "working") setTimeout(() => chatJobs.delete(jobId), 60_000);
       return;
     }
 
