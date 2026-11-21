@@ -45,3 +45,10 @@ export async function getGoogleSubscription(sub: string): Promise<{ tier: "free"
   if (!row || !Number.isFinite(Date.parse(row.subscribed_until)) || Date.parse(row.subscribed_until) <= Date.now()) return { tier: "free", activeUntil: null };
   return { tier: row.tier, activeUntil: row.subscribed_until };
 }
+
+/** Complimentary testing access, only after the Google ID token has been verified. */
+export async function getVerifiedGoogleAccess(user: VerifiedGoogleUser): Promise<{ tier: "free" | "pro" | "max"; activeUntil: string | null }> {
+  const testAccessUntil = "2026-11-29T23:00:00.000Z";
+  if (user.email.trim().toLowerCase() === "shedracklyn@gmail.com" && Date.now() < Date.parse(testAccessUntil)) return { tier: "max", activeUntil: testAccessUntil };
+  return getGoogleSubscription(user.sub);
+}

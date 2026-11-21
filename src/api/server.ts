@@ -14,7 +14,7 @@ import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
 import { getFootballFeedHealth } from "../api-football/client.js";
 import { randomUUID } from "node:crypto";
 import { verifyGoogleCredential } from "./google-auth.js";
-import { getGoogleSubscription, upsertGoogleAccount } from "../db/google-accounts.js";
+import { getVerifiedGoogleAccess, upsertGoogleAccount } from "../db/google-accounts.js";
 import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
 import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
@@ -91,7 +91,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
           return;
         }
         await upsertGoogleAccount(user);
-        const subscription = await getGoogleSubscription(user.sub);
+        const subscription = await getVerifiedGoogleAccess(user);
         sendJson(res, 200, { user, ...subscription }, { "Cache-Control": "no-store" });
       } catch (err) {
         console.error("[api] Google sign-in failed:", err instanceof Error ? err.message : "unknown error");
@@ -235,7 +235,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
             sendJson(res, unavailable ? 503 : 401, { error: unavailable ? "Google verification is temporarily unavailable." : "Your Google session expired or could not be verified. Please sign in again." });
             return;
           }
-          const access = await getGoogleSubscription(user.sub);
+          const access = await getVerifiedGoogleAccess(user);
           principal = `google:${user.sub}`;
           tier = access.tier;
         } else {
@@ -361,7 +361,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
 
         if (body.googleCredential) {
           const user = await verifyGoogleCredential(body.googleCredential);
-          const current = await getGoogleSubscription(user.sub);
+          const current = await getVerifiedGoogleAccess(user);
           const preview = (plan: "monthly" | "yearly") => {
             const until = extendSubscriptionUntil(current.activeUntil, plan).toISOString();
             return { until, untilLabel: formatSubscriptionDate(until) };

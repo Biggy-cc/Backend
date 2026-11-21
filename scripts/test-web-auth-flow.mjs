@@ -20,9 +20,9 @@ Connection.prototype.getLatestBlockhash = async () => ({ blockhash: Keypair.gene
 const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-function token(sub) {
+function token(sub, email = `${sub}@example.test`) {
   const now = Math.floor(Date.now() / 1000);
-  const data = `${encode({ alg: "RS256", kid: "test-key" })}.${encode({ iss: "https://accounts.google.com", aud: "test-client", sub, email: `${sub}@example.test`, email_verified: true, name: sub, iat: now, exp: now + 600 })}`;
+  const data = `${encode({ alg: "RS256", kid: "test-key" })}.${encode({ iss: "https://accounts.google.com", aud: "test-client", sub, email, email_verified: true, name: sub, iat: now, exp: now + 600 })}`;
   return `${data}.${sign("RSA-SHA256", Buffer.from(data), privateKey).toString("base64url")}`;
 }
 const call = (id, name, args) => ({ type: "function_call", call_id: id, name, arguments: JSON.stringify(args) });
@@ -64,6 +64,10 @@ function request(path, body) {
 try {
   const freeCredential = token("free-user");
   const paidCredential = token("paid-user");
+  const testerCredential = token("tester", "shedracklyn@gmail.com");
+  assert.equal((await request("/api/google/session", { credential: testerCredential })).body.tier, "max");
+  assert.equal((await request("/api/access", { googleCredential: testerCredential })).body.access.tier, "max");
+  assert.equal((await request("/api/access", { googleCredential: `${testerCredential.slice(0, -8)}invalid!` })).status, 502);
   assert.equal((await request("/api/google/session", { credential: freeCredential })).body.tier, "free");
   assert.equal((await request("/api/google/session", { credential: paidCredential })).body.tier, "free");
   assert.equal((await request("/api/chat", { message: "build parlay", googleCredential: freeCredential })).status, 403);
