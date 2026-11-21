@@ -904,6 +904,8 @@ type ScoresCacheEntry = {
 /** In-memory FT scores by UTC date — avoids burning /fixtures on every win check. */
 const scoresByDate = new Map<string, ScoresCacheEntry>();
 let liveScoresCache: { savedAt: number; rows: ApiFootballScore[] } | null = null;
+let liveScoresInFlight: Promise<ApiFootballScore[]> | null = null;
+const scoresByDateInFlight = new Map<string, Promise<ApiFootballScore[]>>();
 
 function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
   const status = (row.fixture?.status?.short ?? "").toUpperCase();
@@ -954,22 +956,23 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
 
 /** All matches currently in play. Uses API-Football's dedicated live feed. */
 export async function fetchApiFootballLiveScores(): Promise<ApiFootballScore[]> {
-  if (liveScoresCache && Date.now() - liveScoresCache.savedAt < 25_000) {
+  if (liveScoresCache && Date.now() - liveScoresCache.savedAt < 60_000) {
     return liveScoresCache.rows;
   }
-  if (isApiFootballProviderPaused()) return liveScoresCache?.rows ?? [];
+  if (liveScoresInFlight) return liveScoresInFlight;
 
-  try {
+  liveScoresInFlight = (async () => {
     const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { live: "all" });
     const parsed = (rows ?? [])
       .map(parseScoreRow)
       .filter((row): row is ApiFootballScore => row != null);
     liveScoresCache = { savedAt: Date.now(), rows: parsed };
     return parsed;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[api-football] dedicated live feed:", msg.slice(0, 160));
-    return liveScoresCache?.rows ?? [];
+  })();
+  try {
+    return await liveScoresInFlight;
+  } finally {
+    liveScoresInFlight = null;
   }
 }
 
@@ -981,16 +984,15 @@ export async function fetchApiFootballScoresByDate(
   date: string
 ): Promise<ApiFootballScore[]> {
   const cached = scoresByDate.get(date);
-  const ttlMs = cached?.allFinished ? 6 * 60 * 60 * 1000 : 3 * 60 * 1000;
+  const ttlMs = cached?.allFinished ? 6 * 60 * 60 * 1000 : 5 * 60 * 1000;
   if (cached && Date.now() - cached.savedAt < ttlMs) {
     return cached.rows;
   }
 
-  if (isApiFootballProviderPaused()) {
-    return cached?.rows ?? [];
-  }
+  const inFlight = scoresByDateInFlight.get(date);
+  if (inFlight) return inFlight;
 
-  try {
+  const request = (async () => {
     const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { date });
     const parsed = (rows ?? [])
       .map(parseScoreRow)
@@ -1004,13 +1006,12 @@ export async function fetchApiFootballScoresByDate(
       rows: parsed,
     });
     return parsed;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[api-football] scores date=${date} failed:`,
-      msg.slice(0, 160)
-    );
-    return cached?.rows ?? [];
+  })();
+  scoresByDateInFlight.set(date, request);
+  try {
+    return await request;
+  } finally {
+    scoresByDateInFlight.delete(date);
   }
 }
 

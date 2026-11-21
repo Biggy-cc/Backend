@@ -62,10 +62,17 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
 
 export async function getTodayScoresPayload(date: string): Promise<TodayScoreApiItem[]> {
   if (!isApiFootballConfigured()) return [];
-  const scores = await fetchApiFootballScoresByDate(date);
+  const [scores, live] = await Promise.all([
+    fetchApiFootballScoresByDate(date),
+    fetchApiFootballLiveScores(),
+  ]);
+  const liveById = new Map(live.map((row) => [row.fixtureId, row]));
   return scores.map((row) => {
+    row = liveById.get(row.fixtureId) ?? row;
     const status = row.status.toUpperCase();
-    const phase = LIVE_STATUSES.has(status)
+    const phase = LIVE_STATUSES.has(status) && !liveById.has(row.fixtureId)
+      ? "other"
+      : LIVE_STATUSES.has(status)
       ? "live"
       : FINISHED_STATUSES.has(status)
         ? "finished"
