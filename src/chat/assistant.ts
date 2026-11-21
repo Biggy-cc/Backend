@@ -268,6 +268,11 @@ export async function askBiggy(
   const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
   const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
+  // Card clicks already specify the fixture: fetch it before the first model call
+  // to avoid an additional model/tool round trip for the common summary path.
+  const selectedMatchContext = selectedFixtureId && (asksMatchSummary || requiresMatchEvents)
+    ? await fetchApiFootballSelectedMatch(selectedFixtureId)
+    : null;
   let verifiedParlayContext = "";
   if (requiresParlayApproval) {
     const requestedRisk = /\b(?:safe|hit)\b/i.test(message) ? "safe" : /\b(?:go big|go_big)\b/i.test(message) ? "go_big" : "balanced";
@@ -294,6 +299,7 @@ export async function askBiggy(
       "For a match summary, use get_match_events to identify whether the match is live or the most recent completed meeting and include available goalscorers and minutes. If the user requests a specific past date, pass it as matchDate; never replace it with a different fixture. If event coverage is empty or unavailable, say so without guessing.",
       "For a verified 0–0 match, do not add a warning about unavailable goalscorers: the score already establishes that no goals were scored. If asked about cards or other events and event data is unavailable, say so.",
       ...(selectedFixtureId ? ["The user selected a specific match card. The match-events tool returns that exact fixture, including upcoming matches; use it rather than asking the user to identify it again. For upcoming matches give the kickoff in the user's timezone, and never present missing events as a completed match."] : []),
+      ...(selectedMatchContext ? ["Verified selected-fixture data is supplied with the conversation. Use it directly for this match summary or event question instead of calling get_match_events again. If it says the fixture or events are unavailable, say so rather than inventing details."] : []),
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
       "Use get_team_results whenever the user asks for a club's last, previous, recent or completed matches. If the user asks for the last five, return five completed results with opponent, score, competition and local date. Never answer a results request with upcoming fixtures.",
       "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
@@ -320,6 +326,7 @@ export async function askBiggy(
   const input = [
     ...history.slice(-10).map((item) => ({ role: item.role, content: item.content.slice(0, 2_000) })),
     ...(verifiedParlayContext ? [{ role: "user" as const, content: verifiedParlayContext }] : []),
+    ...(selectedMatchContext ? [{ role: "user" as const, content: `VERIFIED SELECTED FIXTURE DATA: ${JSON.stringify(selectedMatchContext)}` }] : []),
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
@@ -327,7 +334,7 @@ export async function askBiggy(
   let response = await callOpenAi({
     ...base,
     input,
-    ...((asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
+    ...(!selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
       ? { tool_choice: { type: "function", name: "get_match_events" } }
       : requiresRecentResults
       ? { tool_choice: { type: "function", name: "get_team_results" } }

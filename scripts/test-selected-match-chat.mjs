@@ -21,8 +21,9 @@ let openAiCalls = 0;
 globalThis.fetch = async (_url, options) => {
   const payload = JSON.parse(options.body);
   openAiCalls++;
-  if (openAiCalls === 1) return new Response(JSON.stringify({ id: "response-1", output: [{ type: "function_call", call_id: "call-1", name: "get_match_events", arguments: JSON.stringify({ home: "ambiguous", away: "names", matchDate: null }) }] }), { status: 200 });
-  const result = JSON.parse(payload.input[0].output);
+  const selectedContext = payload.input.find((item) => item.content?.startsWith("VERIFIED SELECTED FIXTURE DATA: "));
+  assert.ok(selectedContext);
+  const result = JSON.parse(selectedContext.content.slice("VERIFIED SELECTED FIXTURE DATA: ".length));
   assert.equal(result.match.fixtureId, 1234);
   assert.equal(result.match.status, "NS");
   assert.equal(result.match.selection, "selected_fixture");
@@ -31,5 +32,6 @@ globalThis.fetch = async (_url, options) => {
 const { askBiggy } = await import("../dist/chat/assistant.js");
 const answer = await askBiggy("Tell me about Aston Villa vs Sunderland", [], "Europe/Berlin", 1234);
 assert.match(answer.answer, /Aston Villa/);
+assert.equal(openAiCalls, 1, "selected match summaries require only one model call");
 assert.equal(requests.length, 1, "an upcoming selected fixture needs no team search or events call");
 console.log("Selected match chat test passed: exact fixture ID reaches the football tool");
