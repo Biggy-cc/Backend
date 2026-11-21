@@ -664,6 +664,7 @@ export type ApiFootballScore = {
   away: number;
   finished: boolean;
   status: string;
+  elapsed?: number;
   competition?: string;
   homeLogo?: string;
   awayLogo?: string;
@@ -673,7 +674,7 @@ type ApiFixtureScoreRow = {
   fixture: {
     id: number;
     date?: string;
-    status?: { short?: string };
+    status?: { short?: string; elapsed?: number | null };
   };
   teams: {
     home: { id: number; name: string; logo?: string };
@@ -718,6 +719,7 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
       away: 0,
       finished: false,
       status,
+      elapsed: row.fixture.status?.elapsed ?? undefined,
       competition: row.league?.name,
       homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
       awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
@@ -732,6 +734,7 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     away: Number(ftAway ?? row.goals?.away ?? 0),
     finished,
     status,
+    elapsed: row.fixture.status?.elapsed ?? undefined,
     competition: row.league?.name,
     homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
     awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
@@ -740,7 +743,7 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
 
 /** All matches currently in play. Uses API-Football's dedicated live feed. */
 export async function fetchApiFootballLiveScores(): Promise<ApiFootballScore[]> {
-  if (liveScoresCache && Date.now() - liveScoresCache.savedAt < 45_000) {
+  if (liveScoresCache && Date.now() - liveScoresCache.savedAt < 25_000) {
     return liveScoresCache.rows;
   }
   if (isApiFootballProviderPaused()) return liveScoresCache?.rows ?? [];

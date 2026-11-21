@@ -78,7 +78,7 @@ export function startApiServer(port: number) {
           ),
         ]);
         sendJson(res, 200, { matches, asOf: new Date().toISOString() }, {
-          "Cache-Control": "public, max-age=45",
+          "Cache-Control": "public, max-age=20",
         });
       } catch (err) {
         console.error("[api] /api/live-scores failed:", err);

@@ -16,8 +16,9 @@ export type LiveScoreApiItem = {
   awayLogo?: string;
 };
 
-function clockFor(status: string): string {
+function clockFor(status: string, elapsed?: number): string {
   if (status === "HT") return "HT";
+  if (Number.isFinite(elapsed) && elapsed! > 0) return `${elapsed}′`;
   if (status === "1H") return "1st half";
   if (status === "2H") return "2nd half";
   if (status === "ET" || status === "BT") return "Extra time";
@@ -37,7 +38,7 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
       homeScore: row.home,
       awayScore: row.away,
       status: row.status,
-      clock: clockFor(row.status.toUpperCase()),
+      clock: clockFor(row.status.toUpperCase(), row.elapsed),
       competition: row.competition,
       homeLogo: row.homeLogo,
       awayLogo: row.awayLogo,
