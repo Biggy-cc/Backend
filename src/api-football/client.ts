@@ -118,6 +118,16 @@ export type ApiFootballTeamFixture = {
   away: { name: string; logo?: string };
 };
 
+export type ApiFootballTeamResult = {
+  id: number;
+  playedAt: string;
+  competition: string;
+  home: { name: string; logo?: string };
+  away: { name: string; logo?: string };
+  score: { home: number; away: number };
+  result: "W" | "D" | "L";
+};
+
 type ApiOddValue = { value: string; odd: string };
 type ApiBet = { id: number; name: string; values: ApiOddValue[] };
 type ApiOddsRow = {
@@ -127,6 +137,10 @@ type ApiOddsRow = {
 };
 
 let client: AxiosInstance | null = null;
+const recentTeamResultsCache = new Map<
+  string,
+  { savedAt: number; value: { team: string; results: ApiFootballTeamResult[] } }
+>();
 /** Stop outbound API-Football calls until this time after a provider 429 / daily cap. */
 let providerRateLimitedUntil = 0;
 /** Free tier is ~10 req/min — serialize outbound calls with a floor gap. */
@@ -471,6 +485,54 @@ export async function fetchApiFootballNextFixturesForTeam(
       },
     })),
   };
+}
+
+/** Resolve a club by name, then return its most recent completed fixtures. */
+export async function fetchApiFootballRecentFixturesForTeam(
+  teamName: string,
+  limit = 5
+): Promise<{ team: string; results: ApiFootballTeamResult[] } | null> {
+  const safeLimit = Math.max(1, Math.min(limit, 10));
+  const cacheKey = `${teamName.trim().toLowerCase()}:${safeLimit}`;
+  const cached = recentTeamResultsCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < 5 * 60 * 1000) return cached.value;
+
+  const match = await resolveApiFootballTeam(teamName);
+  if (!match?.team?.id) return null;
+
+  const rows = await apiGet<ApiAnalysisFixtureRow[]>("/fixtures", {
+    team: match.team.id,
+    last: safeLimit,
+  });
+  const value = {
+    team: match.team.name,
+    results: (rows ?? []).map((row) => {
+      const homeScore = row.goals?.home ?? 0;
+      const awayScore = row.goals?.away ?? 0;
+      const teamWasHome = row.teams.home.id === match.team.id;
+      const teamScore = teamWasHome ? homeScore : awayScore;
+      const opponentScore = teamWasHome ? awayScore : homeScore;
+      const result: "W" | "D" | "L" =
+        teamScore === opponentScore ? "D" : teamScore > opponentScore ? "W" : "L";
+      return {
+        id: row.fixture.id,
+        playedAt: row.fixture.date,
+        competition: row.league.name,
+        home: {
+          name: row.teams.home.name,
+          logo: row.teams.home.logo,
+        },
+        away: {
+          name: row.teams.away.name,
+          logo: row.teams.away.logo,
+        },
+        score: { home: homeScore, away: awayScore },
+        result,
+      };
+    }),
+  };
+  recentTeamResultsCache.set(cacheKey, { savedAt: Date.now(), value });
+  return value;
 }
 
 function ymdUtc(d: Date): string {

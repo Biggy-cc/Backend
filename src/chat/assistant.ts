@@ -4,6 +4,7 @@ import { getLiveScoresPayload } from "../api/live-scores.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballNextFixturesForTeam,
+  fetchApiFootballRecentFixturesForTeam,
   fetchApiFootballTeamStanding,
 } from "../api-football/client.js";
 
@@ -58,6 +59,21 @@ const TOOLS = [
         team: { type: "string", description: "Full or common club name, for example Manchester United." },
       },
       required: ["team"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "get_team_results",
+    description: "Get a named football club's most recent completed matches with dates, competitions, opponents, scores and win/draw/loss results.",
+    parameters: {
+      type: "object",
+      properties: {
+        team: { type: "string", description: "Full or common club name, for example Arsenal." },
+        limit: { type: "integer", minimum: 1, maximum: 10, description: "Number of recent completed matches requested." },
+      },
+      required: ["team", "limit"],
       additionalProperties: false,
     },
     strict: true,
@@ -183,6 +199,13 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
     return await fetchApiFootballNextFixturesForTeam(parsed.team.trim(), 5)
       ?? { error: `No team found for ${parsed.team}` };
   }
+  if (name === "get_team_results") {
+    const parsed = JSON.parse(rawArguments || "{}") as { team?: string; limit?: number };
+    if (!parsed.team?.trim()) return { error: "Team name is required" };
+    const limit = Number.isInteger(parsed.limit) ? Math.max(1, Math.min(parsed.limit!, 10)) : 5;
+    return await fetchApiFootballRecentFixturesForTeam(parsed.team.trim(), limit)
+      ?? { error: `No team found for ${parsed.team}` };
+  }
   if (name === "get_team_standing") {
     const parsed = JSON.parse(rawArguments || "{}") as { team?: string };
     if (!parsed.team?.trim()) return { error: "Team name is required" };
@@ -238,12 +261,13 @@ export async function askBiggy(
       "If a short team name genuinely matches multiple professional clubs and the conversation does not disambiguate it, ask one concise clarification question instead of guessing.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
+      "Use get_team_results whenever the user asks for a club's last, previous, recent or completed matches. If the user asks for the last five, return five completed results with opponent, score, competition and local date. Never answer a results request with upcoming fixtures.",
       "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
       "You MUST use analyze_match before giving a prediction, betting lean, score estimate, form comparison, or matchup analysis.",
       "Base any prediction on the returned recent form, head-to-head and injury data. State the evidence briefly; never give a naked guess or generic disclaimer.",
       "Use the supplied tools whenever the user asks about current fixtures, scores, or a Biggy parlay.",
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
-      "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
+      "Never substitute upcoming fixtures for live matches or completed results.",
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
       "When you recommend a specific multi-leg parlay, you MUST call propose_parlay_for_approval. A proposal is never approved or tracked automatically.",
       "Tell the user to review the proposal card and approve it before its matches are tracked.",
