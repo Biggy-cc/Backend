@@ -17,6 +17,7 @@ export type LiveScoreApiItem = {
   competition?: string;
   homeLogo?: string;
   awayLogo?: string;
+  country?: string;
 };
 
 export type TodayScoreApiItem = LiveScoreApiItem & {
@@ -55,6 +56,7 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
       competition: row.competition,
       homeLogo: row.homeLogo,
       awayLogo: row.awayLogo,
+      country: row.competitionCountry,
     }));
 }
 
