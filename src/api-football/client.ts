@@ -46,6 +46,23 @@ type ApiTeamSearchRow = {
   team: { id: number; name: string; logo?: string; country?: string };
 };
 
+type ApiAnalysisFixtureRow = ApiFixtureRow & {
+  goals?: { home: number | null; away: number | null };
+};
+
+type ApiInjuryRow = {
+  player?: { name?: string; reason?: string };
+  team?: { id?: number; name?: string };
+};
+
+export type ApiFootballMatchContext = {
+  home: { name: string; recent: Array<Record<string, unknown>> };
+  away: { name: string; recent: Array<Record<string, unknown>> };
+  headToHead: Array<Record<string, unknown>>;
+  nextMeeting: Record<string, unknown> | null;
+  injuries: Array<{ player: string; team: string; reason: string }>;
+};
+
 export type ApiFootballTeamFixture = {
   id: number;
   kickoffAt: string;
@@ -209,15 +226,89 @@ function isUpcomingStatus(short?: string): boolean {
   return NS.has(short.toUpperCase());
 }
 
+async function resolveApiFootballTeam(teamName: string): Promise<ApiTeamSearchRow | null> {
+  const candidates = await apiGet<ApiTeamSearchRow[]>("/teams", { search: teamName });
+  const query = teamName.trim().toLowerCase();
+  return (candidates ?? []).find((row) => row.team.name.toLowerCase() === query)
+    ?? candidates?.[0]
+    ?? null;
+}
+
+function compactAnalysisFixture(row: ApiAnalysisFixtureRow, perspectiveTeamId?: number) {
+  const homeGoals = row.goals?.home;
+  const awayGoals = row.goals?.away;
+  let result: "W" | "D" | "L" | undefined;
+  if (perspectiveTeamId && homeGoals != null && awayGoals != null) {
+    const perspectiveGoals = row.teams.home.id === perspectiveTeamId ? homeGoals : awayGoals;
+    const opponentGoals = row.teams.home.id === perspectiveTeamId ? awayGoals : homeGoals;
+    result = perspectiveGoals === opponentGoals ? "D" : perspectiveGoals > opponentGoals ? "W" : "L";
+  }
+  return {
+    date: row.fixture.date,
+    competition: row.league.name,
+    home: row.teams.home.name,
+    away: row.teams.away.name,
+    score: homeGoals == null || awayGoals == null ? null : `${homeGoals}-${awayGoals}`,
+    ...(result ? { result } : {}),
+  };
+}
+
+/** Recent form, H2H, next meeting and available injury news for a matchup. */
+export async function fetchApiFootballMatchContext(
+  homeName: string,
+  awayName: string
+): Promise<ApiFootballMatchContext | null> {
+  const [homeTeam, awayTeam] = await Promise.all([
+    resolveApiFootballTeam(homeName),
+    resolveApiFootballTeam(awayName),
+  ]);
+  if (!homeTeam?.team.id || !awayTeam?.team.id) return null;
+
+  const h2h = `${homeTeam.team.id}-${awayTeam.team.id}`;
+  const [homeRecent, awayRecent, previousMeetings, nextMeetings] = await Promise.all([
+    apiGet<ApiAnalysisFixtureRow[]>("/fixtures", { team: homeTeam.team.id, last: 5 }),
+    apiGet<ApiAnalysisFixtureRow[]>("/fixtures", { team: awayTeam.team.id, last: 5 }),
+    apiGet<ApiAnalysisFixtureRow[]>("/fixtures/headtohead", { h2h, last: 5 }),
+    apiGet<ApiAnalysisFixtureRow[]>("/fixtures/headtohead", { h2h, next: 1 }),
+  ]);
+
+  const next = nextMeetings?.[0];
+  let injuries: ApiInjuryRow[] = [];
+  if (next?.fixture.id) {
+    try {
+      injuries = await apiGet<ApiInjuryRow[]>("/injuries", { fixture: next.fixture.id });
+    } catch (err) {
+      console.warn("[api-football] match injuries unavailable:", String(err).slice(0, 120));
+    }
+  }
+
+  return {
+    home: {
+      name: homeTeam.team.name,
+      recent: (homeRecent ?? []).map((row) => compactAnalysisFixture(row, homeTeam.team.id)),
+    },
+    away: {
+      name: awayTeam.team.name,
+      recent: (awayRecent ?? []).map((row) => compactAnalysisFixture(row, awayTeam.team.id)),
+    },
+    headToHead: (previousMeetings ?? []).map((row) => compactAnalysisFixture(row)),
+    nextMeeting: next ? compactAnalysisFixture(next) : null,
+    injuries: (injuries ?? [])
+      .filter((row) => row.player?.name)
+      .map((row) => ({
+        player: row.player!.name!,
+        team: row.team?.name ?? "Unknown team",
+        reason: row.player?.reason ?? "Unavailable",
+      })),
+  };
+}
+
 /** Resolve a club by name, then return its next scheduled fixtures. */
 export async function fetchApiFootballNextFixturesForTeam(
   teamName: string,
   limit = 5
 ): Promise<{ team: string; fixtures: ApiFootballTeamFixture[] } | null> {
-  const candidates = await apiGet<ApiTeamSearchRow[]>("/teams", { search: teamName });
-  const query = teamName.trim().toLowerCase();
-  const match = (candidates ?? []).find((row) => row.team.name.toLowerCase() === query)
-    ?? candidates?.[0];
+  const match = await resolveApiFootballTeam(teamName);
   if (!match?.team?.id) return null;
 
   const rows = await apiGet<ApiFixtureRow[]>("/fixtures", {

@@ -1,7 +1,10 @@
 import { getUpcomingFixturesPayload } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
-import { fetchApiFootballNextFixturesForTeam } from "../api-football/client.js";
+import {
+  fetchApiFootballMatchContext,
+  fetchApiFootballNextFixturesForTeam,
+} from "../api-football/client.js";
 
 type ResponseItem = {
   type?: string;
@@ -43,6 +46,21 @@ const TOOLS = [
         team: { type: "string", description: "Full or common club name, for example Manchester United." },
       },
       required: ["team"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "analyze_match",
+    description: "Research a matchup using both teams' last five results, recent head-to-head meetings, next meeting, and available injury news. Must be used before any match prediction.",
+    parameters: {
+      type: "object",
+      properties: {
+        home: { type: "string", description: "Home team name." },
+        away: { type: "string", description: "Away team name." },
+      },
+      required: ["home", "away"],
       additionalProperties: false,
     },
     strict: true,
@@ -110,6 +128,12 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
     return await fetchApiFootballNextFixturesForTeam(parsed.team.trim(), 5)
       ?? { error: `No team found for ${parsed.team}` };
   }
+  if (name === "analyze_match") {
+    const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
+    if (!parsed.home?.trim() || !parsed.away?.trim()) return { error: "Both teams are required" };
+    return await fetchApiFootballMatchContext(parsed.home.trim(), parsed.away.trim())
+      ?? { error: "Could not resolve one or both teams" };
+  }
   if (name === "get_daily_parlay") {
     const parsed = JSON.parse(rawArguments || "{}") as { risk?: string };
     const tier = parsed.risk === "safe" ? "hit" : parsed.risk === "go_big" ? "go_big" : "aim";
@@ -133,6 +157,8 @@ export async function askBiggy(
       "You are Biggy, a concise and friendly football assistant.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
+      "You MUST use analyze_match before giving a prediction, betting lean, score estimate, form comparison, or matchup analysis.",
+      "Base any prediction on the returned recent form, head-to-head and injury data. State the evidence briefly; never give a naked guess or generic disclaimer.",
       "Use the supplied tools whenever the user asks about current fixtures, scores, or a Biggy parlay.",
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
       "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
