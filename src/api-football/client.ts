@@ -906,6 +906,33 @@ const scoresByDate = new Map<string, ScoresCacheEntry>();
 let liveScoresCache: { savedAt: number; rows: ApiFootballScore[] } | null = null;
 let liveScoresInFlight: Promise<ApiFootballScore[]> | null = null;
 const scoresByDateInFlight = new Map<string, Promise<ApiFootballScore[]>>();
+type ApiFixtureEvent = {
+  time?: { elapsed?: number | null; extra?: number | null };
+  team?: { name?: string };
+  player?: { name?: string | null };
+  assist?: { name?: string | null };
+  type?: string;
+  detail?: string;
+  comments?: string | null;
+};
+const fixtureEventsCache = new Map<number, { savedAt: number; events: ApiFixtureEvent[] }>();
+const fixtureEventsInFlight = new Map<number, Promise<ApiFixtureEvent[]>>();
+
+/** Match events are requested only when needed and shared between concurrent users. */
+export async function fetchApiFootballFixtureEvents(fixtureId: number): Promise<ApiFixtureEvent[]> {
+  const cached = fixtureEventsCache.get(fixtureId);
+  if (cached && Date.now() - cached.savedAt < 60_000) return cached.events;
+  const pending = fixtureEventsInFlight.get(fixtureId);
+  if (pending) return pending;
+  const request = apiGet<ApiFixtureEvent[]>("/fixtures/events", { fixture: fixtureId })
+    .then((events) => {
+      const result = events ?? [];
+      fixtureEventsCache.set(fixtureId, { savedAt: Date.now(), events: result });
+      return result;
+    });
+  fixtureEventsInFlight.set(fixtureId, request);
+  try { return await request; } finally { fixtureEventsInFlight.delete(fixtureId); }
+}
 
 function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
   const status = (row.fixture?.status?.short ?? "").toUpperCase();

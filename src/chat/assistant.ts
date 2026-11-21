@@ -3,6 +3,7 @@ import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
 import {
   fetchApiFootballMatchContext,
+  fetchApiFootballFixtureEvents,
   fetchApiFootballNextFixturesForTeam,
   fetchApiFootballRecentFixturesForTeam,
   fetchApiFootballTeamStanding,
@@ -47,6 +48,21 @@ const TOOLS = [
     name: "get_upcoming_matches",
     description: "Get Biggy's verified upcoming football fixtures for the next seven days.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "get_match_events",
+    description: "Get verified goalscorers, assists, goal minutes, cards and other events for a live match. Use both teams from the conversation.",
+    parameters: {
+      type: "object",
+      properties: {
+        home: { type: "string", description: "Home team in the match being discussed." },
+        away: { type: "string", description: "Away team in the match being discussed." },
+      },
+      required: ["home", "away"],
+      additionalProperties: false,
+    },
     strict: true,
   },
   {
@@ -193,6 +209,28 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
   if (name === "get_upcoming_matches") {
     return { asOf: new Date().toISOString(), fixtures: await getUpcomingFixturesPayload() };
   }
+  if (name === "get_match_events") {
+    const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const home = normalize(parsed.home ?? "");
+    const away = normalize(parsed.away ?? "");
+    if (!home || !away) return { error: "Both teams are required to identify the match." };
+    const matches = await getLiveScoresPayload();
+    const teamMatches = (candidate: string, query: string) => {
+      const name = normalize(candidate);
+      return name === query || (query.length >= 4 && name.includes(query));
+    };
+    const candidates = matches.filter((match) =>
+      (teamMatches(match.home, home) && teamMatches(match.away, away)) ||
+      (teamMatches(match.home, away) && teamMatches(match.away, home))
+    );
+    if (candidates.length !== 1) return {
+      error: candidates.length ? "More than one live match matches those teams; ask the user to clarify." : "That match is not currently in the live feed; do not invent event details.",
+    };
+    const match = candidates[0]!;
+    const events = await fetchApiFootballFixtureEvents(Number(match.id));
+    return { match, events, asOf: new Date().toISOString() };
+  }
   if (name === "get_team_schedule") {
     const parsed = JSON.parse(rawArguments || "{}") as { team?: string };
     if (!parsed.team?.trim()) return { error: "Team name is required" };
@@ -238,6 +276,7 @@ export async function askBiggy(
   const requiresRecentResults =
     /\b(?:last|previous|recent)\b/i.test(message) &&
     /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|match(?:es)?|game(?:s)?|result(?:s)?)\b/i.test(message);
+  const requiresMatchEvents = /\b(?:who\s+(?:has\s+)?scored|who(?:'s|\s+is)\s+scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message);
   const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
   const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
@@ -263,6 +302,7 @@ export async function askBiggy(
       "Resolve professional clubs to their primary domestic league. Never substitute a friendly, summer series, youth, reserve or exhibition competition for a domestic league table.",
       "If a short team name genuinely matches multiple professional clubs and the conversation does not disambiguate it, ask one concise clarification question instead of guessing.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
+      "Use get_match_events for goalscorers, assists, cards and match events, including short contextual follow-ups such as 'who scored?'. Resolve both teams from the conversation. If the matchup is unclear, ask for clarification. Distinguish own goals, penalties, disallowed goals and missing event coverage; never invent scorers or claim live scores alone contain them.",
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
       "Use get_team_results whenever the user asks for a club's last, previous, recent or completed matches. If the user asks for the last five, return five completed results with opponent, score, competition and local date. Never answer a results request with upcoming fixtures.",
       "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
@@ -296,7 +336,9 @@ export async function askBiggy(
   let response = await callOpenAi({
     ...base,
     input,
-    ...(requiresRecentResults
+    ...(requiresMatchEvents && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
+      ? { tool_choice: { type: "function", name: "get_match_events" } }
+      : requiresRecentResults
       ? { tool_choice: { type: "function", name: "get_team_results" } }
       : {}),
   });
