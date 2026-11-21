@@ -295,6 +295,15 @@ async function resolveApiFootballTeam(teamName: string): Promise<ApiTeamSearchRo
     ?? null;
 }
 
+/** Avoid silently choosing a different club when a name is ambiguous. */
+async function resolveEventTeam(teamName: string): Promise<ApiTeamSearchRow | null> {
+  const candidates = await apiGet<ApiTeamSearchRow[]>("/teams", { search: teamName });
+  const query = teamName.trim().toLowerCase();
+  const exact = (candidates ?? []).filter((row) => row.team.name.toLowerCase() === query);
+  if (exact.length === 1) return exact[0]!;
+  return candidates?.length === 1 ? candidates[0]! : null;
+}
+
 export async function fetchApiFootballCurrentLeagues(): Promise<ApiFootballLeague[]> {
   if (currentLeaguesCache && Date.now() - currentLeaguesCache.savedAt < 12 * 60 * 60 * 1000) {
     return currentLeaguesCache.leagues;
@@ -932,6 +941,56 @@ export async function fetchApiFootballFixtureEvents(fixtureId: number): Promise<
     });
   fixtureEventsInFlight.set(fixtureId, request);
   try { return await request; } finally { fixtureEventsInFlight.delete(fixtureId); }
+}
+
+/** Resolve the exact live fixture or most recent completed meeting, then fetch its events. */
+export async function fetchApiFootballMatchEvents(
+  homeName: string,
+  awayName: string,
+  matchDate: string | null = null
+): Promise<{ match: Record<string, unknown>; events: ApiFixtureEvent[]; asOf: string } | { error: string }> {
+  if (matchDate && !/^\d{4}-\d{2}-\d{2}$/.test(matchDate)) return { error: "Invalid match date; use YYYY-MM-DD." };
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const matchesTeam = (candidate: string, query: string) => {
+    const name = normalize(candidate);
+    const wanted = normalize(query);
+    return name === wanted || (wanted.length >= 4 && name.includes(wanted));
+  };
+  if (!homeName.trim() || !awayName.trim()) return { error: "Both teams are required to identify the match." };
+
+  if (!matchDate) {
+    const live = await fetchApiFootballLiveScores();
+    const candidates = live.filter((match) =>
+      (matchesTeam(match.homeTeam, homeName) && matchesTeam(match.awayTeam, awayName)) ||
+      (matchesTeam(match.homeTeam, awayName) && matchesTeam(match.awayTeam, homeName))
+    );
+    if (candidates.length > 1) return { error: "Multiple live fixtures match these teams; ask the user to clarify the competition." };
+    if (candidates.length === 1) {
+      const match = candidates[0]!;
+      const events = await fetchApiFootballFixtureEvents(match.fixtureId);
+      return { match: { ...match, selection: "live" }, events, asOf: new Date().toISOString() };
+    }
+  }
+
+  const [home, away] = await Promise.all([resolveEventTeam(homeName), resolveEventTeam(awayName)]);
+  if (!home || !away || home.team.id === away.team.id) return { error: "Could not unambiguously identify both teams. Ask the user for the full team names or competition." };
+  const meetings = await apiGet<ApiAnalysisFixtureRow[]>("/fixtures/headtohead", {
+    h2h: `${home.team.id}-${away.team.id}`,
+    last: 20,
+  });
+  const completed = (meetings ?? [])
+    .filter((row) => FT_STATUS.has((row.fixture.status?.short ?? "").toUpperCase()))
+    .filter((row) => !matchDate || row.fixture.date?.slice(0, 10) === matchDate)
+    .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date));
+  if (!completed.length) return { error: matchDate ? "No completed meeting found on the requested date; do not substitute a different match." : "No recent completed meeting found; do not invent event details." };
+  const latest = completed[0]!;
+  if (matchDate && completed.length > 1) return { error: "Multiple completed fixtures match that date; ask the user to clarify the competition." };
+  const events = await fetchApiFootballFixtureEvents(latest.fixture.id);
+  return {
+    match: { id: latest.fixture.id, ...compactAnalysisFixture(latest), status: latest.fixture.status?.short, selection: "most_recent_completed" },
+    events,
+    asOf: new Date().toISOString(),
+  };
 }
 
 function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
