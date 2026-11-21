@@ -7,6 +7,7 @@ import { configuredLlmProviders } from "./picks/llm.js";
 import { startApiServer } from "./api/server.js";
 import { getFootballDataProvider } from "./providers/football.js";
 import { isApiFootballFreeQuotaMode } from "./api-football/config.js";
+import { startPaymentPoller } from "./payments/poller.js";
 
 /** Bot/Telegram errors must never take down the public API. */
 process.on("unhandledRejection", (reason) => {
@@ -49,6 +50,7 @@ async function main() {
   }
 
   startScheduler();
+  startPaymentPoller();
   void startBot().catch((err) => console.error("[bot] start failed:", err));
 
   const skipStartup =

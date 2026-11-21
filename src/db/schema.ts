@@ -13,6 +13,37 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS google_accounts (
+  google_sub TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  picture_url TEXT,
+  subscription_tier TEXT NOT NULL DEFAULT 'free' CHECK (subscription_tier IN ('free', 'pro', 'max')),
+  subscribed_until TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS google_pending_payments (
+  id TEXT PRIMARY KEY,
+  google_sub TEXT NOT NULL,
+  plan TEXT NOT NULL CHECK (plan IN ('monthly', 'yearly')),
+  tier TEXT NOT NULL CHECK (tier IN ('pro', 'max')),
+  amount_usdc REAL NOT NULL,
+  reference TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  fulfilled_at TEXT,
+  paid_signature TEXT UNIQUE,
+  subscribed_until TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chat_usage (
+  principal TEXT NOT NULL,
+  usage_date TEXT NOT NULL,
+  messages INTEGER NOT NULL DEFAULT 0,
+  parlays INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (principal, usage_date)
+);
+
 CREATE TABLE IF NOT EXISTS pending_payments (
   id TEXT PRIMARY KEY,
   telegram_id INTEGER NOT NULL,
@@ -75,4 +106,6 @@ export const SQLITE_ALTER_STATEMENTS = [
   `ALTER TABLE users ADD COLUMN photo_url TEXT`,
   `ALTER TABLE users ADD COLUMN subscription_tier TEXT NOT NULL DEFAULT 'pro'`,
   `ALTER TABLE pending_payments ADD COLUMN tier TEXT NOT NULL DEFAULT 'pro'`,
+  `ALTER TABLE google_pending_payments ADD COLUMN paid_signature TEXT`,
+  `ALTER TABLE google_pending_payments ADD COLUMN subscribed_until TEXT`,
 ];

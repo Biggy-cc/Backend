@@ -1,4 +1,4 @@
-import { getUpcomingFixturesPayload } from "../api/fixtures.js";
+import { getUpcomingFixturesPayload, type FixtureApiItem } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
 import { fetchMatchOdds, resolveLiveOddsFixture } from "../api-football/match-odds.js";
@@ -6,6 +6,7 @@ import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
   fetchApiFootballSelectedMatch,
+  fetchApiFootballFixtureResearch,
   fetchApiFootballNextFixturesForTeam,
   fetchApiFootballRecentFixturesForTeam,
   fetchApiFootballTeamStanding,
@@ -216,7 +217,9 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
   return body;
 }
 
-async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number): Promise<unknown> {
+function nameKey(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+
+async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number, parlayFixtures?: FixtureApiItem[], researched?: Set<string>): Promise<unknown> {
   if (name === "get_match_odds") {
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
     try {
@@ -258,6 +261,18 @@ async function runTool(name: string, rawArguments: string | undefined, selectedF
   if (name === "analyze_match") {
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
     if (!parsed.home?.trim() || !parsed.away?.trim()) return { error: "Both teams are required" };
+    if (parlayFixtures) {
+      const fixture = parlayFixtures.find((item) => nameKey(item.home.name) === nameKey(parsed.home!) && nameKey(item.away.name) === nameKey(parsed.away!));
+      if (!fixture) return { error: "This fixture is not in the verified upcoming list." };
+      try {
+        const research = await fetchApiFootballFixtureResearch(Number(fixture.id));
+        if (!research) return { error: "Provider has no research for this fixture; choose another or explain the limitation." };
+        researched?.add(fixture.id);
+        return { fixture, research, note: "Provider research is informational and is not a guarantee. Odds are not included." };
+      } catch {
+        return { error: "Provider research is temporarily unavailable for this fixture." };
+      }
+    }
     return await fetchApiFootballMatchContext(parsed.home.trim(), parsed.away.trim())
       ?? { error: "Could not resolve one or both teams" };
   }
@@ -276,7 +291,9 @@ export async function askBiggy(
   message: string,
   history: BiggyChatMessage[] = [],
   timezone = "UTC",
-  selectedFixtureId?: number
+  selectedFixtureId?: number,
+  allowParlay = false,
+  authorizeProposal?: () => Promise<boolean>
 ): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const requiresRecentResults =
@@ -285,9 +302,10 @@ export async function askBiggy(
   const requiresMatchEvents = /\b(?:who\s+(?:has\s+)?scored|who(?:'s|\s+is)\s+scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message);
   const asksMatchOdds = /\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message);
   const asksMatchSummary = /\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message);
-  const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
+  const recentParlayContext = history.slice(-6).some((item) => /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
-  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
+  const requiresParlayApproval = /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(message) || continuesParlayTask;
+  if (requiresParlayApproval && !allowParlay) return { answer: "Parlay research requires an active Biggy Pro or Max subscription.", model };
   // Card clicks already specify the fixture: fetch it before the first model call
   // to avoid an additional model/tool round trip for the common summary path.
   const selectedMatchContext = selectedFixtureId && !asksMatchOdds && (asksMatchSummary || requiresMatchEvents)
@@ -299,22 +317,29 @@ export async function askBiggy(
     catch { selectedOddsContext = { error: "The odds provider is temporarily unavailable; do not invent prices." }; }
   }
   let verifiedParlayContext = "";
+  let parlayFixtures: FixtureApiItem[] | undefined;
+  let requestedParlayRisk: ProposedParlay["risk"] = "balanced";
+  const researchedFixtures = new Set<string>();
   if (requiresParlayApproval) {
-    const requestedRisk = /\b(?:safe|hit)\b/i.test(message) ? "safe" : /\b(?:go big|go_big)\b/i.test(message) ? "go_big" : "balanced";
-    const tier = requestedRisk === "safe" ? "hit" : requestedRisk === "go_big" ? "go_big" : "aim";
-    const date = todayPickDate();
-    const saved = await getCachedPick(date, tier);
-    if (saved) {
-      verifiedParlayContext = `VERIFIED PARLAY CONTEXT: A saved ${requestedRisk} card exists for ${date}: ${JSON.stringify(saved).slice(0, 10_000)}`;
-    } else {
-      const fixtures = await getUpcomingFixturesPayload();
-      verifiedParlayContext = `VERIFIED PARLAY CONTEXT: No saved ${requestedRisk} card exists for ${date}. Research and build a fresh ${requestedRisk} proposal from these verified upcoming fixtures: ${JSON.stringify(fixtures).slice(0, 12_000)}`;
+    const riskText = `${history.filter((item) => item.role === "user").slice(-3).map((item) => item.content).join(" ")} ${message}`;
+    const lastRisk = [...riskText.matchAll(/\b(?:safe|hit|balanced|go big|go_big)\b/gi)].at(-1)?.[0].toLowerCase();
+    requestedParlayRisk = lastRisk === "safe" || lastRisk === "hit" ? "safe" : lastRisk === "go big" || lastRisk === "go_big" ? "go_big" : "balanced";
+    const timeframe = [...riskText.matchAll(/\b(?:today|tonight|tomorrow)\b/gi)].at(-1)?.[0].toLowerCase();
+    let localDate = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+    if (timeframe === "tomorrow") {
+      const nextDay = new Date(`${localDate}T12:00:00Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      localDate = nextDay.toISOString().slice(0, 10);
     }
+    parlayFixtures = await getUpcomingFixturesPayload(timeframe ? { localDate, timeZone: timezone } : undefined);
+    if (parlayFixtures.length < 2) return { answer: "I can’t verify enough upcoming fixtures for that parlay right now. Please try again later or choose a different day.", model };
+    verifiedParlayContext = `VERIFIED PARLAY CONTEXT: Research and propose a ${requestedParlayRisk} parlay using only these fixtures: ${JSON.stringify(parlayFixtures).slice(0, 12_000)}`;
   }
   const base = {
     model,
     instructions: [
       "You are Biggy, a concise and friendly football assistant.",
+      ...(!allowParlay ? ["This account does not have parlay access. Do not create, recommend, or draft a multi-leg bet, including when asked with indirect wording. Explain that a paid plan is required; ordinary football questions are allowed."] : []),
       "Conversation context is binding. Interpret short follow-ups using the immediately preceding intent: if the user asks a table question and then says another club name, answer the same table question for that club; if they ask about a fixture and then name another club, answer the same fixture question for that club.",
       "In contextual follow-ups, change only the entity the user changed. Preserve the requested statistic, competition type, timeframe and comparison unless the user explicitly changes them.",
       "Resolve professional clubs to their primary domestic league. Never substitute a friendly, summer series, youth, reserve or exhibition competition for a domestic league table.",
@@ -343,9 +368,11 @@ export async function askBiggy(
       "Default to balanced risk when the user requests a parlay without a risk level. If the user later replies yes, safe, balanced or go big, continue the active parlay task using that answer; do not restart the conversation or repeat that no saved card exists.",
       "Never report the absence of a saved parlay more than once in the same task. The fallback is to research and build a fresh proposal, not to stop.",
       "When VERIFIED PARLAY CONTEXT is supplied in the input, do not call get_daily_parlay or get_upcoming_matches again. Use the supplied fixtures, analyze the candidate matchups, and proceed to the approval proposal.",
+      "For a parlay, use analyze_match on every fixture before proposing it. Use 2 or 3 distinct fixtures. If provider research is unavailable, explain the limitation instead of fabricating a parlay. Do not invent bookmaker odds or prices.",
+      "Do not mention saved cards, internal caches, tool calls, or implementation details. For a parlay, start with a concise explanation of the proposed selections and the verified evidence. Do not claim injuries, form, head-to-head results, or odds that the research did not supply. Call analyze_match for candidate fixtures in parallel where possible.",
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
-    tools: TOOLS,
+    tools: allowParlay ? TOOLS : TOOLS.filter((tool) => tool.name !== "get_daily_parlay" && tool.name !== "propose_parlay_for_approval"),
     reasoning: { effort: process.env.OPENAI_REASONING_EFFORT ?? "none" },
     max_output_tokens: 700,
   };
@@ -373,7 +400,7 @@ export async function askBiggy(
   for (let round = 0; round < 5; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {
-      if (requiresParlayApproval && !proposedParlay && !forcedProposal) {
+      if (requiresParlayApproval && !proposedParlay && !forcedProposal && researchedFixtures.size >= 2) {
         forcedProposal = true;
         response = await callOpenAi({
           ...base,
@@ -385,13 +412,25 @@ export async function askBiggy(
       }
       const answer = extractText(response);
       if (!answer) throw new Error("OpenAI returned an empty answer");
+      if (requiresParlayApproval && !proposedParlay) return { answer: "I couldn’t verify enough suitable matches to build a parlay right now. Please try another day or ask me to research specific matches.", model };
       return { answer, model, ...(proposedParlay ? { parlay: proposedParlay } : {}) };
     }
 
     const toolOutputs = await Promise.all(
       calls.map(async (call) => {
+        if (!allowParlay && (call.name === "get_daily_parlay" || call.name === "propose_parlay_for_approval")) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Parlays require an active paid subscription." }) };
+        if (call.name === "get_daily_parlay" && (!authorizeProposal || !(await authorizeProposal()))) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not provide a parlay." }) };
         if (call.name === "propose_parlay_for_approval") {
-          proposedParlay = JSON.parse(call.arguments || "{}") as ProposedParlay;
+          if (!allowParlay) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Parlays require an active paid subscription." }) };
+          const candidate = JSON.parse(call.arguments || "{}") as ProposedParlay;
+          const legs = Array.isArray(candidate.legs) ? candidate.legs : [];
+          const matching = legs.map((leg) => parlayFixtures?.find((fixture) => nameKey(fixture.home.name) === nameKey(leg.home ?? "") && nameKey(fixture.away.name) === nameKey(leg.away ?? "")));
+          const valid = legs.length >= 2 && legs.length <= 8 && matching.every((fixture, index) => fixture && researchedFixtures.has(fixture.id) && Date.parse(fixture.kickoffAt) > Date.now() && typeof legs[index].selection === "string" && legs[index].selection.trim().length > 0) && new Set(matching.map((fixture) => fixture?.id)).size === legs.length;
+          if (!valid || candidate.risk !== requestedParlayRisk) {
+            return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. Correct the proposal or explain what is unavailable." }) };
+          }
+          if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
+          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ ...leg, home: matching[i]!.home.name, away: matching[i]!.away.name, kickoffAt: matching[i]!.kickoffAt })) };
           return {
             type: "function_call_output",
             call_id: call.call_id,
@@ -401,7 +440,7 @@ export async function askBiggy(
         return {
           type: "function_call_output",
           call_id: call.call_id,
-          output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId)),
+          output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId, parlayFixtures, researchedFixtures)),
         };
       })
     );

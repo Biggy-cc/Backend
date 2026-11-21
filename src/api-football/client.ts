@@ -480,6 +480,27 @@ export async function fetchApiFootballMatchContext(
   };
 }
 
+const fixtureResearchCache = new Map<number, { savedAt: number; data: Record<string, unknown> }>();
+const fixtureResearchInFlight = new Map<number, Promise<Record<string, unknown> | null>>();
+
+/** Provider's fixture-specific research in one request, shared across chats. */
+export async function fetchApiFootballFixtureResearch(fixtureId: number): Promise<Record<string, unknown> | null> {
+  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0) return null;
+  const cached = fixtureResearchCache.get(fixtureId);
+  if (cached && Date.now() - cached.savedAt < 30 * 60_000) return cached.data;
+  const existing = fixtureResearchInFlight.get(fixtureId);
+  if (existing) return existing;
+  const pending = apiGet<Array<Record<string, unknown>>>("/predictions", { fixture: fixtureId }).then((rows) => {
+    const data = rows?.[0];
+    if (!data || (!data.teams && !data.comparison && !data.h2h)) return null;
+    if (fixtureResearchCache.size >= 500) fixtureResearchCache.delete(fixtureResearchCache.keys().next().value!);
+    fixtureResearchCache.set(fixtureId, { savedAt: Date.now(), data });
+    return data;
+  });
+  fixtureResearchInFlight.set(fixtureId, pending);
+  try { return await pending; } finally { fixtureResearchInFlight.delete(fixtureId); }
+}
+
 /** Resolve a club by name, then return its next scheduled fixtures. */
 export async function fetchApiFootballNextFixturesForTeam(
   teamName: string,

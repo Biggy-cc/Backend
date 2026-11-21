@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Connection, Keypair } from "@solana/web3.js";
+
+process.env.DATABASE_BACKEND = "sqlite";
+process.env.DATABASE_PATH = join(mkdtempSync(join(tmpdir(), "biggy-google-test-")), "test.db");
+process.env.GOOGLE_CLIENT_ID = "test-client";
+process.env.USDC_RECEIVER_WALLET = Keypair.generate().publicKey.toBase58();
+process.env.USDC_MINT = Keypair.generate().publicKey.toBase58();
+Connection.prototype.getLatestBlockhash = async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1 });
+const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
+globalThis.fetch = async () => new Response(JSON.stringify({ keys: [jwk] }), { status: 200 });
+const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+function token(overrides = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const head = encode({ alg: "RS256", kid: "test-key" });
+  const body = encode({ iss: "https://accounts.google.com", aud: "test-client", sub: "google-sub-1", email: "user@example.test", email_verified: true, name: "Test User", iat: now, exp: now + 300, ...overrides });
+  const data = `${head}.${body}`;
+  return `${data}.${sign("RSA-SHA256", Buffer.from(data), privateKey).toString("base64url")}`;
+}
+const { runMigrations } = await import("../dist/db/client.js");
+await runMigrations();
+const { verifyGoogleCredential } = await import("../dist/api/google-auth.js");
+const { upsertGoogleAccount, getGoogleSubscription } = await import("../dist/db/google-accounts.js");
+const user = await verifyGoogleCredential(token());
+assert.equal(user.sub, "google-sub-1");
+await assert.rejects(verifyGoogleCredential(token({ aud: "wrong" })), /Invalid/);
+await assert.rejects(verifyGoogleCredential(token({ exp: 1 })), /expired/);
+await assert.rejects(verifyGoogleCredential(`${token().slice(0, -3)}bad`), /signature/);
+await upsertGoogleAccount(user);
+assert.equal((await getGoogleSubscription(user.sub)).tier, "free");
+
+const { startGoogleCheckout, getGoogleCheckout } = await import("../dist/api/google-checkout.js");
+const { fulfillGooglePayment, verifiedUsdcDelta, checkGooglePendingPayments } = await import("../dist/payments/google-usdc.js");
+const { PublicKey } = await import("@solana/web3.js");
+const healthyRpc = Connection.prototype.getLatestBlockhash;
+Connection.prototype.getLatestBlockhash = async () => { throw new Error("RPC unavailable"); };
+await assert.rejects(startGoogleCheckout(user.sub, "monthly", "pro"), /Payment verification is temporarily unavailable/);
+Connection.prototype.getLatestBlockhash = healthyRpc;
+const receiver = new PublicKey(process.env.USDC_RECEIVER_WALLET);
+const mint = new PublicKey(process.env.USDC_MINT);
+const checkout = await startGoogleCheckout(user.sub, "monthly", "pro");
+assert.equal((await startGoogleCheckout(user.sub, "monthly", "pro")).paymentId, checkout.paymentId, "retries reuse the outstanding checkout");
+assert.equal(checkout.identityProvider, "google");
+assert.equal(checkout.fulfilled, false);
+assert.equal(checkout.amount, 9);
+const balance = (amount, owner = receiver.toBase58(), tokenMint = mint.toBase58()) => ({ accountIndex: 3, owner, mint: tokenMint, uiTokenAmount: { decimals: 6, amount: String(amount) } });
+const tx = (error, before, after) => ({ meta: { err: error, preTokenBalances: [balance(before)], postTokenBalances: [balance(after)] } });
+assert.equal(verifiedUsdcDelta(tx(null, 100, 9_000_100), receiver, mint), 9_000_000n);
+assert.equal(verifiedUsdcDelta(tx({ failed: true }, 100, 9_000_100), receiver, mint), null);
+assert.equal(verifiedUsdcDelta({ meta: { err: null, preTokenBalances: [], postTokenBalances: [balance(9_000_000, Keypair.generate().publicKey.toBase58())] } }, receiver, mint), null);
+assert.equal(await fulfillGooglePayment(checkout.paymentId, "test-signature-1"), true);
+assert.equal(await fulfillGooglePayment(checkout.paymentId, "test-signature-1"), false);
+const active = await getGoogleSubscription(user.sub);
+assert.equal(active.tier, "pro");
+assert.equal((await getGoogleCheckout(checkout.paymentId)).fulfilled, true);
+const renewal = await startGoogleCheckout(user.sub, "monthly", "pro");
+assert.equal(await fulfillGooglePayment(renewal.paymentId, "test-signature-1"), false, "the same transaction cannot fulfill two checkouts");
+assert.equal(await fulfillGooglePayment(renewal.paymentId, "test-signature-2"), true);
+assert.ok(Date.parse((await getGoogleSubscription(user.sub)).activeUntil) > Date.parse(active.activeUntil));
+await assert.rejects(startGoogleCheckout(user.sub, "monthly", "max"), /Plan changes/);
+
+const pending = await startGoogleCheckout(user.sub, "monthly", "pro");
+let txError = null;
+let received = 8_999_999;
+let confirmation = "finalized";
+const chain = {
+  async getSignaturesForAddress() { return [{ signature: "onchain-signature", err: null, confirmationStatus: confirmation }]; },
+  async getParsedTransaction() { return { ...tx(txError, 100, 100 + received), transaction: { message: { accountKeys: [{ pubkey: new PublicKey(pending.reference) }] } } }; },
+};
+await checkGooglePendingPayments(chain);
+assert.equal((await getGoogleCheckout(pending.paymentId)).fulfilled, false, "underpayment must not be credited");
+received = 9_000_000;
+txError = { failed: true };
+await checkGooglePendingPayments(chain);
+assert.equal((await getGoogleCheckout(pending.paymentId)).fulfilled, false, "failed transactions must not be credited");
+txError = null;
+confirmation = "confirmed";
+await checkGooglePendingPayments(chain);
+assert.equal((await getGoogleCheckout(pending.paymentId)).fulfilled, false, "unfinalized transactions must not be credited");
+confirmation = "finalized";
+await checkGooglePendingPayments(chain);
+assert.equal((await getGoogleCheckout(pending.paymentId)).fulfilled, true, "a matching finalized transfer must be credited");
+
+const { reserveChatUsage, reserveParlayUsage, refundChatUsage } = await import("../dist/chat/usage.js");
+for (let i = 0; i < 2; i++) assert.equal((await reserveChatUsage("guest:test", "guest", false)).allowed, true);
+assert.equal((await reserveChatUsage("guest:test", "guest", false)).allowed, false);
+assert.equal(await reserveParlayUsage("guest:test", "guest", new Date()), false);
+assert.equal((await reserveChatUsage("google:test", "free", true)).allowed, false);
+const time = new Date();
+assert.equal((await reserveChatUsage("google:paid", "pro", false, time)).allowed, true);
+for (let i = 0; i < 5; i++) assert.equal(await reserveParlayUsage("google:paid", "pro", time), true);
+assert.equal(await reserveParlayUsage("google:paid", "pro", time), false);
+await refundChatUsage("google:paid", "pro", true, time);
+assert.equal(await reserveParlayUsage("google:paid", "pro", time), true);
+console.log("Google/payment tests passed: signatures, checkout, ledger, replay, renewal and usage limits");

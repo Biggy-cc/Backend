@@ -10,7 +10,10 @@ export async function readRawBody(req: IncomingMessage): Promise<string> {
 
 export async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
+    size += Buffer.byteLength(chunk as Buffer);
+    if (size > 64 * 1024) throw new Error("Request body too large");
     chunks.push(chunk as Buffer);
   }
 

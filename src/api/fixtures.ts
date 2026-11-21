@@ -23,7 +23,7 @@ export type FixtureApiItem = {
   competition?: string;
 };
 
-function selectDisplayFixtures(all: TxlineFixture[], max = 12): TxlineFixture[] {
+function selectDisplayFixtures(all: TxlineFixture[], max = 12, options?: { localDate: string; timeZone: string }): TxlineFixture[] {
   const nowMs = Date.now();
   const horizonEnd = nowMs + 7 * 24 * 60 * 60 * 1000;
   const provider = getFootballDataProvider();
@@ -35,7 +35,8 @@ function selectDisplayFixtures(all: TxlineFixture[], max = 12): TxlineFixture[] 
     .filter((f) => {
       const kickoff = fixtureKickoffMs(f);
       return kickoff >= nowMs && kickoff < horizonEnd;
-    });
+    })
+    .filter((f) => !options || new Date(fixtureKickoffMs(f)).toLocaleDateString("en-CA", { timeZone: options.timeZone }) === options.localDate);
 
   // Soft-prefer UCL + top-5 on the FE strip; still fill with other leagues
   return upcoming
@@ -50,7 +51,7 @@ function selectDisplayFixtures(all: TxlineFixture[], max = 12): TxlineFixture[] 
     .slice(0, max);
 }
 
-export async function getUpcomingFixturesPayload(): Promise<FixtureApiItem[]> {
+export async function getUpcomingFixturesPayload(options?: { localDate: string; timeZone: string }): Promise<FixtureApiItem[]> {
   try {
     const all = await Promise.race([
       fetchFixturesSnapshot(),
@@ -59,7 +60,7 @@ export async function getUpcomingFixturesPayload(): Promise<FixtureApiItem[]> {
       ),
     ]);
 
-    return selectDisplayFixtures(all).map((f) => ({
+    return selectDisplayFixtures(all, 12, options).map((f) => ({
       id: String(f.FixtureId),
       home: {
         name: f.Participant1,

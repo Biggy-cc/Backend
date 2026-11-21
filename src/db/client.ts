@@ -123,9 +123,11 @@ export async function runMigrations(): Promise<void> {
     }
     await d1Exec(d1Config, BASE_SCHEMA);
     await migrateLegacyColumns();
+    await d1Exec(d1Config, `CREATE UNIQUE INDEX IF NOT EXISTS google_payment_signature_unique ON google_pending_payments(paid_signature)`);
     return;
   }
 
   sqlite().exec(BASE_SCHEMA);
   await migrateLegacyColumns();
+  sqlite().exec(`CREATE UNIQUE INDEX IF NOT EXISTS google_payment_signature_unique ON google_pending_payments(paid_signature)`);
 }

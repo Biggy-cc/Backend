@@ -13,13 +13,18 @@ import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
 import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
 import { getFootballFeedHealth } from "../api-football/client.js";
 import { randomUUID } from "node:crypto";
+import { verifyGoogleCredential } from "./google-auth.js";
+import { getGoogleSubscription, upsertGoogleAccount } from "../db/google-accounts.js";
+import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
+import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
+import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
 const chatJobs = new Map<string, ChatJob>();
 
 function isLongParlayTask(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
   if (/\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message)) return true;
-  if (/\b(parlay|accumulator|acca)\b/i.test(message)) return true;
+  if (isParlayRequest(message, history)) return true;
   if (/\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message)) return true;
   if (/\b(?:who\s+(?:has\s+)?scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message)) return true;
   if (
@@ -28,6 +33,11 @@ function isLongParlayTask(message: string, history: Array<{ role: "user" | "assi
   ) return true;
   return /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message)
     && history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
+}
+
+function isParlayRequest(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
+  return /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(message) ||
+    (/^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message) && history.slice(-6).some((item) => /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(item.content)));
 }
 
 const CORS_HEADERS = {
@@ -50,7 +60,7 @@ function sendJson(
   res.end(JSON.stringify(body));
 }
 
-export function startApiServer(port: number) {
+export function startApiServer(port: number, host = "0.0.0.0") {
   const server = http.createServer(async (req, res) => {
     const url = req.url?.split("?")[0];
 
@@ -67,6 +77,26 @@ export function startApiServer(port: number) {
     if (req.method === "OPTIONS") {
       res.writeHead(204, CORS_HEADERS);
       res.end();
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/google/session") {
+      try {
+        const body = await readJsonBody<{ credential?: string }>(req);
+        let user;
+        try { user = await verifyGoogleCredential(body.credential ?? ""); }
+        catch (error) {
+          const unavailable = error instanceof Error && /unavailable|fetch failed|timeout/i.test(error.message);
+          sendJson(res, unavailable ? 503 : 401, { error: unavailable ? "Google verification is temporarily unavailable." : "Could not verify Google sign-in. Please try again." });
+          return;
+        }
+        await upsertGoogleAccount(user);
+        const subscription = await getGoogleSubscription(user.sub);
+        sendJson(res, 200, { user, ...subscription }, { "Cache-Control": "no-store" });
+      } catch (err) {
+        console.error("[api] Google sign-in failed:", err instanceof Error ? err.message : "unknown error");
+        sendJson(res, 503, { error: "Account service is temporarily unavailable. Please try again." });
+      }
       return;
     }
 
@@ -175,6 +205,8 @@ export function startApiServer(port: number) {
           history?: Array<{ role?: string; content?: string }>;
           timezone?: string;
           fixtureId?: unknown;
+          googleCredential?: string;
+          guestId?: string;
         }>(req);
         const message = body.message?.trim() ?? "";
         if (!message || message.length > 1_000) {
@@ -192,6 +224,45 @@ export function startApiServer(port: number) {
             role: item.role as "user" | "assistant",
             content: item.content!.trim().slice(0, 2_000),
           }));
+        let principal: string;
+        let tier: ChatTier = "guest";
+        if (body.googleCredential) {
+          let user;
+          try {
+            user = await verifyGoogleCredential(body.googleCredential);
+          } catch (error) {
+            const unavailable = error instanceof Error && /unavailable|fetch failed|timeout/i.test(error.message);
+            sendJson(res, unavailable ? 503 : 401, { error: unavailable ? "Google verification is temporarily unavailable." : "Your Google session expired or could not be verified. Please sign in again." });
+            return;
+          }
+          const access = await getGoogleSubscription(user.sub);
+          principal = `google:${user.sub}`;
+          tier = access.tier;
+        } else {
+          if (typeof body.guestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(body.guestId)) {
+            sendJson(res, 400, { error: "Please refresh the app before chatting." });
+            return;
+          }
+          principal = `guest:${body.guestId}`;
+        }
+        const parlayRequest = isParlayRequest(message, history);
+        if (parlayRequest && tier !== "pro" && tier !== "max") {
+          sendJson(res, 403, { error: "Parlay research requires an active Biggy Pro or Max subscription." });
+          return;
+        }
+        const reservedAt = new Date();
+        const usage = await reserveChatUsage(principal, tier, false, reservedAt);
+        if (!usage.allowed) {
+          const error = usage.reason === "parlays" ? "Parlay research requires an active Biggy Pro or Max subscription." : tier === "guest" ? "You’ve used your two guest messages. Sign in to continue." : "You’ve reached your daily message limit.";
+          sendJson(res, 403, { error });
+          return;
+        }
+        let parlayReserved = false;
+        let parlayReservation: Promise<boolean> | undefined;
+        const authorizeProposal = () => {
+          parlayReservation ??= reserveParlayUsage(principal, tier, reservedAt).then((allowed) => { parlayReserved = allowed; return allowed; });
+          return parlayReservation;
+        };
         let timezone = "UTC";
         const rawFixtureId = body.fixtureId;
         const fixtureId = typeof rawFixtureId === "string" && /^[1-9]\d{0,9}$/.test(rawFixtureId) ? Number(rawFixtureId) : undefined;
@@ -206,17 +277,23 @@ export function startApiServer(port: number) {
         if (isLongParlayTask(message, history)) {
           const jobId = randomUUID();
           chatJobs.set(jobId, { status: "working", createdAt: Date.now() });
-          void askBiggy(message, history, timezone, fixtureId).then((result) => {
+          void askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal).then((result) => {
             chatJobs.set(jobId, { status: "complete", result, createdAt: Date.now() });
-          }).catch((error) => {
+          }).catch(async (error) => {
             console.error(`[api] chat job ${jobId} failed:`, error);
+            try { await refundChatUsage(principal, tier, parlayReserved, reservedAt); } catch { console.error("[api] Failed to refund chat usage"); }
             chatJobs.set(jobId, { status: "failed", error: "Biggy could not complete the football research", createdAt: Date.now() });
           });
           sendJson(res, 202, { jobId, status: "working" }, { "Cache-Control": "no-store" });
           return;
         }
-        const result = await askBiggy(message, history, timezone, fixtureId);
-        sendJson(res, 200, result, { "Cache-Control": "no-store" });
+        try {
+          const result = await askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal);
+          sendJson(res, 200, result, { "Cache-Control": "no-store" });
+        } catch (error) {
+          try { await refundChatUsage(principal, tier, parlayReserved, reservedAt); } catch { console.error("[api] Failed to refund chat usage"); }
+          throw error;
+        }
       } catch (err) {
         console.error("[api] POST /api/chat failed:", err);
         sendJson(res, 502, { error: "Biggy could not answer right now" });
@@ -280,10 +357,21 @@ export function startApiServer(port: number) {
 
     if (req.method === "POST" && url === "/api/access") {
       try {
-        const body = await readJsonBody<{ telegramAuth?: TelegramLoginPayload }>(req);
+        const body = await readJsonBody<{ telegramAuth?: TelegramLoginPayload; googleCredential?: string }>(req);
+
+        if (body.googleCredential) {
+          const user = await verifyGoogleCredential(body.googleCredential);
+          const current = await getGoogleSubscription(user.sub);
+          const preview = (plan: "monthly" | "yearly") => {
+            const until = extendSubscriptionUntil(current.activeUntil, plan).toISOString();
+            return { until, untilLabel: formatSubscriptionDate(until) };
+          };
+          sendJson(res, 200, { access: { subscribed: current.tier !== "free", tier: current.tier, activeUntil: current.activeUntil, activeUntilLabel: current.activeUntil ? formatSubscriptionDate(current.activeUntil) : null, renewPreview: { monthly: preview("monthly"), yearly: preview("yearly") } } }, { "Cache-Control": "no-store" });
+          return;
+        }
 
         if (!body.telegramAuth) {
-          sendJson(res, 400, { error: "Telegram login required" });
+          sendJson(res, 401, { error: "Please sign in to check subscription access." });
           return;
         }
 
@@ -305,6 +393,7 @@ export function startApiServer(port: number) {
           plan?: string;
           tier?: string;
           telegramAuth?: TelegramLoginPayload;
+          googleCredential?: string;
         }>(req);
 
         const plan = body.plan;
@@ -319,12 +408,17 @@ export function startApiServer(port: number) {
           return;
         }
 
-        if (!body.telegramAuth) {
-          sendJson(res, 400, { error: "Telegram login required" });
+        let session;
+        if (body.googleCredential) {
+          const user = await verifyGoogleCredential(body.googleCredential);
+          await upsertGoogleAccount(user);
+          session = await startGoogleCheckout(user.sub, plan, tier);
+        } else if (body.telegramAuth) {
+          session = await startWebCheckout(plan, tier, body.telegramAuth);
+        } else {
+          sendJson(res, 401, { error: "Please sign in to continue." });
           return;
         }
-
-        const session = await startWebCheckout(plan, tier, body.telegramAuth);
         sendJson(res, 200, { checkout: session });
       } catch (err) {
         console.error("[api] POST /api/checkout failed:", err);
@@ -356,7 +450,7 @@ export function startApiServer(port: number) {
     const checkoutMatch = parsedUrl.pathname.match(/^\/api\/checkout\/([^/]+)$/);
     if (req.method === "GET" && checkoutMatch) {
       try {
-        const session = await getCheckoutSession(checkoutMatch[1]!);
+        const session = await getGoogleCheckout(checkoutMatch[1]!) ?? await getCheckoutSession(checkoutMatch[1]!);
         if (!session) {
           sendJson(res, 404, { error: "Checkout not found" });
           return;
@@ -375,7 +469,7 @@ export function startApiServer(port: number) {
     res.end();
   });
 
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, host, () => {
     console.log(`API listening on 0.0.0.0:${port}`);
   });
 

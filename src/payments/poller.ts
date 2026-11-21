@@ -1,6 +1,7 @@
 import { getBot } from "../bot/index.js";
 import { paymentVerifiedMessage } from "../db/users.js";
 import { checkPendingPayments } from "./usdc.js";
+import { checkGooglePendingPayments } from "./google-usdc.js";
 import { notifyNewSubscription } from "./subscription-notify.js";
 import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
@@ -37,6 +38,7 @@ export function startPaymentPoller() {
     }
     inFlight = true;
     try {
+      await checkGooglePendingPayments();
       const bot = getBot();
       if (!bot) {
         schedule();

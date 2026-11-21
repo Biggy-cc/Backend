@@ -13,7 +13,7 @@ import {
   type SubscriptionTier,
 } from "../config/pricing.js";
 
-function buildWalletPayUrls(
+export function buildWalletPayUrls(
   receiver: string,
   amount: number,
   reference: string,

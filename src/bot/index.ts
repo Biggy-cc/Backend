@@ -252,8 +252,6 @@ async function startBotPolling(): Promise<void> {
   });
 
   console.log("Telegram bot polling…");
-  const { startPaymentPoller } = await import("../payments/poller.js");
-  startPaymentPoller();
   startLiveWatchPoller(bot);
 
   try {
