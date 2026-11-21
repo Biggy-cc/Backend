@@ -22,7 +22,7 @@ axios.defaults.adapter = async (config) => {
   return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
 
-const { fetchMatchOdds } = await import("../dist/api-football/match-odds.js");
+const { fetchMatchOdds, matchParlaySelection } = await import("../dist/api-football/match-odds.js");
 const [live, shared] = await Promise.all([fetchMatchOdds(1), fetchMatchOdds(1)]);
 assert.equal(live.phase, "live");
 assert.deepEqual(live.markets[0].selections.map((s) => s.selection), ["Home", "Draw"]);
@@ -31,6 +31,10 @@ assert.equal(calls.filter((c) => c.path === "/odds/live").length, 1);
 const pre = await fetchMatchOdds(2);
 assert.equal(pre.phase, "pre-match");
 assert.equal(pre.bookmaker, "Example Book");
+assert.equal(matchParlaySelection(pre, "Parma win", "Parma", "AS Roma")?.price, 2.25);
+assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma"), null);
+assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma"), null);
+assert.equal(matchParlaySelection(live, "Parma win", "Parma", "AS Roma"), null, "never treat live prices as prematch");
 assert.match((await fetchMatchOdds(3)).error, /unavailable/);
 const blocked = await fetchMatchOdds(4);
 assert.match(blocked.unavailable, /blocked/);

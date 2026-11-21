@@ -16,9 +16,17 @@ setCachedFixtures([
 ]);
 let researchCalls = 0;
 axios.defaults.adapter = async (config) => {
-  assert.equal(config.url, "/predictions");
-  researchCalls++;
-  return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response: [{ teams: { home: { last_5: { form: "WWDLW" } }, away: { last_5: { form: "DLWDL" } } } }] } };
+  let response;
+  if (config.url === "/predictions") {
+    researchCalls++;
+    response = [{ teams: { home: { last_5: { form: "WWDLW" } }, away: { last_5: { form: "DLWDL" } } } }];
+  } else if (config.url === "/fixtures") {
+    const id = config.params.id;
+    response = [{ fixture: { id, timestamp: kickoff, date: new Date(kickoff * 1000).toISOString(), status: { short: "NS" } }, league: { name: "Premier League", country: "England" }, teams: { home: { id: 1, name: id === 41 ? "Alpha" : "Gamma" }, away: { id: 2, name: id === 41 ? "Beta" : "Delta" } }, goals: { home: null, away: null } }];
+  } else if (config.url === "/odds") {
+    response = [{ fixture: { id: config.params.fixture }, bookmakers: [{ name: "Test Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "1.85" }] }, { name: "Goals Over/Under", values: [{ value: "Over 1.5", odd: "1.45" }] }] }] }];
+  } else throw new Error(`Unexpected request ${config.url}`);
+  return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
 const call = (id, name, args) => ({ type: "function_call", call_id: id, name, arguments: JSON.stringify(args) });
 let round = 0;
@@ -44,6 +52,8 @@ assert.equal(answer.parlay.legs[0].kickoffAt, new Date(kickoff * 1000).toISOStri
 assert.equal(answer.parlay.legs[0].fixtureId, "41", "fixture ID must come from verified data");
 assert.equal(answer.parlay.legs[0].homeLogo, "https://example.test/alpha.png", "home crest must come from verified data");
 assert.equal(answer.parlay.legs[0].awayLogo, "https://example.test/beta.png", "away crest must come from verified data");
+assert.equal(answer.parlay.legs[0].odds?.price, 1.85, "price must come from the exact provider market");
+assert.equal(answer.parlay.legs[1].odds?.price, 1.45, "total goals must match the exact line");
 assert.equal(researchCalls, 2, "each fixture uses one research request");
 let invalidRound = 0;
 globalThis.fetch = async (_url, options) => {

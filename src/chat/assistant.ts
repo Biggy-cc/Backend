@@ -1,7 +1,7 @@
 import { getUpcomingFixturesPayload, type FixtureApiItem } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
-import { fetchMatchOdds, resolveLiveOddsFixture } from "../api-football/match-odds.js";
+import { fetchMatchOdds, matchParlaySelection, resolveLiveOddsFixture } from "../api-football/match-odds.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
@@ -38,6 +38,7 @@ export type ProposedParlay = {
     fixtureId?: string;
     homeLogo?: string;
     awayLogo?: string;
+    odds?: { price: number; bookmaker: string; market: string; selection: string; retrievedAt: string; providerUpdatedAt?: string };
   }>;
 };
 
@@ -433,7 +434,13 @@ export async function askBiggy(
             return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. Correct the proposal or explain what is unavailable." }) };
           }
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
-          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl })) };
+          const quotes = await Promise.all(legs.map(async (leg, i) => {
+            try {
+              const data = await Promise.race([fetchMatchOdds(Number(matching[i]!.id)), new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000))]);
+              return data && !("error" in data) ? matchParlaySelection(data, leg.selection, matching[i]!.home.name, matching[i]!.away.name) : null;
+            } catch { return null; }
+          }));
+          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl, ...(quotes[i] ? { odds: quotes[i]! } : {}) })) };
           return {
             type: "function_call_output",
             call_id: call.call_id,
