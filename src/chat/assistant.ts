@@ -65,7 +65,7 @@ const TOOLS = [
   {
     type: "function",
     name: "get_team_standing",
-    description: "Get a named club's current domestic league position, points, record, goal difference and recent form.",
+    description: "Get a named club's current primary domestic league position, points, record, goal difference and recent form. Never use friendly, summer-series, youth, reserve or exhibition tables.",
     parameters: {
       type: "object",
       properties: { team: { type: "string" } },
@@ -216,6 +216,10 @@ export async function askBiggy(
     model,
     instructions: [
       "You are Biggy, a concise and friendly football assistant.",
+      "Conversation context is binding. Interpret short follow-ups using the immediately preceding intent: if the user asks a table question and then says another club name, answer the same table question for that club; if they ask about a fixture and then name another club, answer the same fixture question for that club.",
+      "In contextual follow-ups, change only the entity the user changed. Preserve the requested statistic, competition type, timeframe and comparison unless the user explicitly changes them.",
+      "Resolve professional clubs to their primary domestic league. Never substitute a friendly, summer series, youth, reserve or exhibition competition for a domestic league table.",
+      "If a short team name genuinely matches multiple professional clubs and the conversation does not disambiguate it, ask one concise clarification question instead of guessing.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
       "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
