@@ -1,6 +1,7 @@
 import { getUpcomingFixturesPayload } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
+import { fetchMatchOdds, resolveLiveOddsFixture } from "../api-football/match-odds.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
@@ -37,6 +38,17 @@ export type ProposedParlay = {
 };
 
 const TOOLS = [
+  {
+    type: "function",
+    name: "get_match_odds",
+    description: "Get available in-play or pre-match betting odds for the exact football match. Use both teams from the current conversation; never invent prices.",
+    parameters: {
+      type: "object",
+      properties: { home: { type: "string" }, away: { type: "string" } },
+      required: ["home", "away"], additionalProperties: false,
+    },
+    strict: true,
+  },
   {
     type: "function",
     name: "get_live_scores",
@@ -205,6 +217,13 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
 }
 
 async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number): Promise<unknown> {
+  if (name === "get_match_odds") {
+    const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
+    try {
+      const id = selectedFixtureId ?? await resolveLiveOddsFixture(parsed.home ?? "", parsed.away ?? "");
+      return id ? await fetchMatchOdds(id) : { error: "Could not unambiguously identify the live fixture. Ask the user to select the match or specify both teams." };
+    } catch { return { error: "The odds provider is temporarily unavailable; do not invent prices." }; }
+  }
   if (name === "get_live_scores") {
     return { asOf: new Date().toISOString(), matches: await getLiveScoresPayload() };
   }
@@ -264,15 +283,21 @@ export async function askBiggy(
     /\b(?:last|previous|recent)\b/i.test(message) &&
     /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|match(?:es)?|game(?:s)?|result(?:s)?)\b/i.test(message);
   const requiresMatchEvents = /\b(?:who\s+(?:has\s+)?scored|who(?:'s|\s+is)\s+scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message);
+  const asksMatchOdds = /\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message);
   const asksMatchSummary = /\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message);
   const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
   const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
   // Card clicks already specify the fixture: fetch it before the first model call
   // to avoid an additional model/tool round trip for the common summary path.
-  const selectedMatchContext = selectedFixtureId && (asksMatchSummary || requiresMatchEvents)
+  const selectedMatchContext = selectedFixtureId && !asksMatchOdds && (asksMatchSummary || requiresMatchEvents)
     ? await fetchApiFootballSelectedMatch(selectedFixtureId)
     : null;
+  let selectedOddsContext: unknown = null;
+  if (selectedFixtureId && asksMatchOdds) {
+    try { selectedOddsContext = await fetchMatchOdds(selectedFixtureId); }
+    catch { selectedOddsContext = { error: "The odds provider is temporarily unavailable; do not invent prices." }; }
+  }
   let verifiedParlayContext = "";
   if (requiresParlayApproval) {
     const requestedRisk = /\b(?:safe|hit)\b/i.test(message) ? "safe" : /\b(?:go big|go_big)\b/i.test(message) ? "go_big" : "balanced";
@@ -295,6 +320,8 @@ export async function askBiggy(
       "Resolve professional clubs to their primary domestic league. Never substitute a friendly, summer series, youth, reserve or exhibition competition for a domestic league table.",
       "If a short team name genuinely matches multiple professional clubs and the conversation does not disambiguate it, ask one concise clarification question instead of guessing.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
+      "When the user asks for odds, including misspellings like 'ods' or a correction such as 'I mean match odds', answer the odds request in the context of the match they were discussing. Use get_match_odds unless verified odds data is supplied. Never substitute the score for the odds. Clearly label live versus pre-match, report only active prices and the bookmaker only if supplied, and state the retrieval or provider-update time in the user's timezone. If prices are missing, suspended or the provider failed, say so without inventing prices or treating pre-match prices as live.",
+      ...(selectedOddsContext ? ["Verified selected-fixture odds data is supplied with the conversation. Use that data directly for this odds request; do not call get_match_odds again."] : []),
       "Use get_match_events for goalscorers, assists, cards and match events, including short contextual follow-ups such as 'who scored?'. Resolve both teams from the conversation. If the matchup is unclear, ask for clarification. Distinguish own goals, penalties, disallowed goals and missing event coverage; never invent scorers or claim live scores alone contain them.",
       "For a match summary, use get_match_events to identify whether the match is live or the most recent completed meeting and include available goalscorers and minutes. If the user requests a specific past date, pass it as matchDate; never replace it with a different fixture. If event coverage is empty or unavailable, say so without guessing.",
       "For a verified 0–0 match, do not add a warning about unavailable goalscorers: the score already establishes that no goals were scored. If asked about cards or other events and event data is unavailable, say so.",
@@ -327,6 +354,7 @@ export async function askBiggy(
     ...history.slice(-10).map((item) => ({ role: item.role, content: item.content.slice(0, 2_000) })),
     ...(verifiedParlayContext ? [{ role: "user" as const, content: verifiedParlayContext }] : []),
     ...(selectedMatchContext ? [{ role: "user" as const, content: `VERIFIED SELECTED FIXTURE DATA: ${JSON.stringify(selectedMatchContext)}` }] : []),
+    ...(selectedOddsContext ? [{ role: "user" as const, content: `VERIFIED SELECTED FIXTURE ODDS: ${JSON.stringify(selectedOddsContext)}` }] : []),
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
@@ -334,7 +362,9 @@ export async function askBiggy(
   let response = await callOpenAi({
     ...base,
     input,
-    ...(!selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
+    ...(!selectedOddsContext && asksMatchOdds
+      ? { tool_choice: { type: "function", name: "get_match_odds" } }
+      : !selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
       ? { tool_choice: { type: "function", name: "get_match_events" } }
       : requiresRecentResults
       ? { tool_choice: { type: "function", name: "get_team_results" } }

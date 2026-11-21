@@ -217,7 +217,7 @@ function assertBudget(need = 1): void {
   }
 }
 
-async function apiGet<T>(
+export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number>,
   priority = 0
@@ -976,7 +976,7 @@ export async function fetchApiFootballFixtureEvents(fixtureId: number): Promise<
 }
 
 /** Resolve a selected score card by provider ID, never by an ambiguous team name. */
-export async function fetchApiFootballSelectedMatch(fixtureId: number): Promise<{ match: Record<string, unknown>; events: ApiFixtureEvent[]; eventsUnavailable?: boolean; asOf: string } | { error: string }> {
+export async function fetchApiFootballSelectedMatch(fixtureId: number, options?: { includeEvents?: boolean }): Promise<{ match: Record<string, unknown>; events: ApiFixtureEvent[]; eventsUnavailable?: boolean; asOf: string } | { error: string }> {
   if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0) return { error: "Invalid selected fixture." };
   const recentLive = liveScoresCache && Date.now() - liveScoresCache.savedAt < 60_000
     ? liveScoresCache.rows.find((row) => row.fixtureId === fixtureId) : undefined;
@@ -1006,7 +1006,7 @@ export async function fetchApiFootballSelectedMatch(fixtureId: number): Promise<
   const hasEvents = new Set(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE", "FT", "AET", "PEN"]).has(status);
   let events: ApiFixtureEvent[] = [];
   let eventsUnavailable = false;
-  if (hasEvents) {
+  if (hasEvents && options?.includeEvents !== false) {
     try { events = await fetchApiFootballFixtureEvents(fixtureId); }
     catch { eventsUnavailable = true; }
   }

@@ -18,6 +18,7 @@ type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<Ret
 const chatJobs = new Map<string, ChatJob>();
 
 function isLongParlayTask(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
+  if (/\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message)) return true;
   if (/\b(parlay|accumulator|acca)\b/i.test(message)) return true;
   if (/\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message)) return true;
   if (/\b(?:who\s+(?:has\s+)?scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message)) return true;
