@@ -1,4 +1,4 @@
-import { fetchApiFootballScoresByDate } from "../api-football/client.js";
+import { fetchApiFootballLiveScores } from "../api-football/client.js";
 import { isApiFootballConfigured } from "../api-football/results.js";
 
 const LIVE_STATUSES = new Set(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]);
@@ -25,8 +25,7 @@ function clockFor(status: string): string {
 
 export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
   if (!isApiFootballConfigured()) return [];
-  const date = new Date().toISOString().slice(0, 10);
-  const scores = await fetchApiFootballScoresByDate(date);
+  const scores = await fetchApiFootballLiveScores();
   return scores
     .filter((row) => LIVE_STATUSES.has(row.status.toUpperCase()))
     .map((row) => ({

@@ -557,6 +557,7 @@ type ScoresCacheEntry = {
 
 /** In-memory FT scores by UTC date — avoids burning /fixtures on every win check. */
 const scoresByDate = new Map<string, ScoresCacheEntry>();
+let liveScoresCache: { savedAt: number; rows: ApiFootballScore[] } | null = null;
 
 function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
   const status = (row.fixture?.status?.short ?? "").toUpperCase();
@@ -591,6 +592,27 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     status,
     competition: row.league?.name,
   };
+}
+
+/** All matches currently in play. Uses API-Football's dedicated live feed. */
+export async function fetchApiFootballLiveScores(): Promise<ApiFootballScore[]> {
+  if (liveScoresCache && Date.now() - liveScoresCache.savedAt < 45_000) {
+    return liveScoresCache.rows;
+  }
+  if (isApiFootballProviderPaused()) return liveScoresCache?.rows ?? [];
+
+  try {
+    const rows = await apiGet<ApiFixtureScoreRow[]>("/fixtures", { live: "all" });
+    const parsed = (rows ?? [])
+      .map(parseScoreRow)
+      .filter((row): row is ApiFootballScore => row != null);
+    liveScoresCache = { savedAt: Date.now(), rows: parsed };
+    return parsed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[api-football] dedicated live feed:", msg.slice(0, 160));
+    return liveScoresCache?.rows ?? [];
+  }
 }
 
 /**
