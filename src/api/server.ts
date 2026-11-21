@@ -18,6 +18,10 @@ const chatJobs = new Map<string, ChatJob>();
 
 function isLongParlayTask(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
   if (/\b(parlay|accumulator|acca)\b/i.test(message)) return true;
+  if (
+    /\b(?:last|previous|recent)\b/i.test(message) &&
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|match(?:es)?|game(?:s)?|result(?:s)?)\b/i.test(message)
+  ) return true;
   return /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message)
     && history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
 }
@@ -193,7 +197,7 @@ export function startApiServer(port: number) {
             chatJobs.set(jobId, { status: "complete", result, createdAt: Date.now() });
           }).catch((error) => {
             console.error(`[api] chat job ${jobId} failed:`, error);
-            chatJobs.set(jobId, { status: "failed", error: "Biggy could not complete the parlay research", createdAt: Date.now() });
+            chatJobs.set(jobId, { status: "failed", error: "Biggy could not complete the football research", createdAt: Date.now() });
           });
           sendJson(res, 202, { jobId, status: "working" }, { "Cache-Control": "no-store" });
           return;
