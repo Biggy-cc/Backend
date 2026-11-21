@@ -173,6 +173,7 @@ export function startApiServer(port: number) {
           message?: string;
           history?: Array<{ role?: string; content?: string }>;
           timezone?: string;
+          fixtureId?: unknown;
         }>(req);
         const message = body.message?.trim() ?? "";
         if (!message || message.length > 1_000) {
@@ -191,6 +192,8 @@ export function startApiServer(port: number) {
             content: item.content!.trim().slice(0, 2_000),
           }));
         let timezone = "UTC";
+        const rawFixtureId = body.fixtureId;
+        const fixtureId = typeof rawFixtureId === "string" && /^[1-9]\d{0,9}$/.test(rawFixtureId) ? Number(rawFixtureId) : undefined;
         if (typeof body.timezone === "string" && body.timezone.length <= 64) {
           try {
             new Intl.DateTimeFormat("en", { timeZone: body.timezone }).format();
@@ -202,7 +205,7 @@ export function startApiServer(port: number) {
         if (isLongParlayTask(message, history)) {
           const jobId = randomUUID();
           chatJobs.set(jobId, { status: "working", createdAt: Date.now() });
-          void askBiggy(message, history, timezone).then((result) => {
+          void askBiggy(message, history, timezone, fixtureId).then((result) => {
             chatJobs.set(jobId, { status: "complete", result, createdAt: Date.now() });
           }).catch((error) => {
             console.error(`[api] chat job ${jobId} failed:`, error);
@@ -211,7 +214,7 @@ export function startApiServer(port: number) {
           sendJson(res, 202, { jobId, status: "working" }, { "Cache-Control": "no-store" });
           return;
         }
-        const result = await askBiggy(message, history, timezone);
+        const result = await askBiggy(message, history, timezone, fixtureId);
         sendJson(res, 200, result, { "Cache-Control": "no-store" });
       } catch (err) {
         console.error("[api] POST /api/chat failed:", err);

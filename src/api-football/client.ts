@@ -929,6 +929,8 @@ const scoresByDate = new Map<string, ScoresCacheEntry>();
 let liveScoresCache: { savedAt: number; rows: ApiFootballScore[] } | null = null;
 let liveScoresInFlight: Promise<ApiFootballScore[]> | null = null;
 const scoresByDateInFlight = new Map<string, Promise<ApiFootballScore[]>>();
+const selectedFixtureCache = new Map<number, { savedAt: number; match: ApiFootballScore }>();
+const selectedFixtureInFlight = new Map<number, Promise<ApiFootballScore | undefined>>();
 
 /** Passive status only: never makes a provider request. Counts are per process. */
 export function getFootballFeedHealth(date?: string) {
@@ -971,6 +973,44 @@ export async function fetchApiFootballFixtureEvents(fixtureId: number): Promise<
     });
   fixtureEventsInFlight.set(fixtureId, request);
   try { return await request; } finally { fixtureEventsInFlight.delete(fixtureId); }
+}
+
+/** Resolve a selected score card by provider ID, never by an ambiguous team name. */
+export async function fetchApiFootballSelectedMatch(fixtureId: number): Promise<{ match: Record<string, unknown>; events: ApiFixtureEvent[]; eventsUnavailable?: boolean; asOf: string } | { error: string }> {
+  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0) return { error: "Invalid selected fixture." };
+  const recentLive = liveScoresCache && Date.now() - liveScoresCache.savedAt < 60_000
+    ? liveScoresCache.rows.find((row) => row.fixtureId === fixtureId) : undefined;
+  const recentDate = [...scoresByDate.values()]
+    .filter((entry) => Date.now() - entry.savedAt < 60_000)
+    .flatMap((entry) => entry.rows).find((row) => row.fixtureId === fixtureId);
+  const cached = selectedFixtureCache.get(fixtureId);
+  let match = recentLive ?? recentDate ?? (cached && Date.now() - cached.savedAt < 60_000 ? cached.match : undefined);
+  if (!match) {
+    let pending = selectedFixtureInFlight.get(fixtureId);
+    if (!pending) {
+      pending = apiGet<ApiFixtureScoreRow[]>("/fixtures", { id: fixtureId }, 1).then((rows) => {
+        const row = (rows ?? []).find((item) => item.fixture?.id === fixtureId);
+        const result = row ? parseScoreRow(row) ?? undefined : undefined;
+        if (result) {
+          if (selectedFixtureCache.size >= 1000) selectedFixtureCache.delete(selectedFixtureCache.keys().next().value!);
+          selectedFixtureCache.set(fixtureId, { savedAt: Date.now(), match: result });
+        }
+        return result;
+      });
+      selectedFixtureInFlight.set(fixtureId, pending);
+    }
+    try { match = await pending; } finally { if (selectedFixtureInFlight.get(fixtureId) === pending) selectedFixtureInFlight.delete(fixtureId); }
+  }
+  if (!match) return { error: "The selected fixture is unavailable. Do not substitute a different match." };
+  const status = match.status.toUpperCase();
+  const hasEvents = new Set(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE", "FT", "AET", "PEN"]).has(status);
+  let events: ApiFixtureEvent[] = [];
+  let eventsUnavailable = false;
+  if (hasEvents) {
+    try { events = await fetchApiFootballFixtureEvents(fixtureId); }
+    catch { eventsUnavailable = true; }
+  }
+  return { match: { ...match, selection: "selected_fixture" }, events, ...(eventsUnavailable ? { eventsUnavailable: true } : {}), asOf: new Date().toISOString() };
 }
 
 /** Resolve the exact live fixture or most recent completed meeting, then fetch its events. */

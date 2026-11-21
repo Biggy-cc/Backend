@@ -4,6 +4,7 @@ import { getLiveScoresPayload } from "../api/live-scores.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
+  fetchApiFootballSelectedMatch,
   fetchApiFootballNextFixturesForTeam,
   fetchApiFootballRecentFixturesForTeam,
   fetchApiFootballTeamStanding,
@@ -203,7 +204,7 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
   return body;
 }
 
-async function runTool(name: string, rawArguments: string | undefined): Promise<unknown> {
+async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number): Promise<unknown> {
   if (name === "get_live_scores") {
     return { asOf: new Date().toISOString(), matches: await getLiveScoresPayload() };
   }
@@ -211,6 +212,7 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
     return { asOf: new Date().toISOString(), fixtures: await getUpcomingFixturesPayload() };
   }
   if (name === "get_match_events") {
+    if (selectedFixtureId) return fetchApiFootballSelectedMatch(selectedFixtureId);
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string; matchDate?: string | null };
     if (!parsed.home?.trim() || !parsed.away?.trim()) return { error: "Both teams are required to identify the match." };
     return await fetchApiFootballMatchEvents(parsed.home.trim(), parsed.away.trim(), parsed.matchDate ?? null);
@@ -254,7 +256,8 @@ export type BiggyChatMessage = { role: "user" | "assistant"; content: string };
 export async function askBiggy(
   message: string,
   history: BiggyChatMessage[] = [],
-  timezone = "UTC"
+  timezone = "UTC",
+  selectedFixtureId?: number
 ): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const requiresRecentResults =
@@ -289,6 +292,7 @@ export async function askBiggy(
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
       "Use get_match_events for goalscorers, assists, cards and match events, including short contextual follow-ups such as 'who scored?'. Resolve both teams from the conversation. If the matchup is unclear, ask for clarification. Distinguish own goals, penalties, disallowed goals and missing event coverage; never invent scorers or claim live scores alone contain them.",
       "For a match summary, use get_match_events to identify whether the match is live or the most recent completed meeting and include available goalscorers and minutes. If the user requests a specific past date, pass it as matchDate; never replace it with a different fixture. If event coverage is empty or unavailable, say so without guessing.",
+      ...(selectedFixtureId ? ["The user selected a specific match card. The match-events tool returns that exact fixture, including upcoming matches; use it rather than asking the user to identify it again. For upcoming matches give the kickoff in the user's timezone, and never present missing events as a completed match."] : []),
       "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
       "Use get_team_results whenever the user asks for a club's last, previous, recent or completed matches. If the user asks for the last five, return five completed results with opponent, score, competition and local date. Never answer a results request with upcoming fixtures.",
       "Use get_team_standing whenever the user asks for a club's league position, rank, points, table record, or current standing.",
@@ -359,7 +363,7 @@ export async function askBiggy(
         return {
           type: "function_call_output",
           call_id: call.call_id,
-          output: JSON.stringify(await runTool(call.name ?? "", call.arguments)),
+          output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId)),
         };
       })
     );
