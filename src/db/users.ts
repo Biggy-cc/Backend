@@ -7,6 +7,7 @@ export type UserRow = {
   photo_url: string | null;
   trial_started_at: string;
   subscribed_until: string | null;
+  subscription_tier: "pro" | "max";
   early_bird: number;
   trial_picks_used: number;
 };

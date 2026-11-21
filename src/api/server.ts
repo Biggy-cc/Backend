@@ -286,6 +286,7 @@ export function startApiServer(port: number) {
       try {
         const body = await readJsonBody<{
           plan?: string;
+          tier?: string;
           telegramAuth?: TelegramLoginPayload;
         }>(req);
 
@@ -295,12 +296,18 @@ export function startApiServer(port: number) {
           return;
         }
 
+        const tier = body.tier ?? "pro";
+        if (tier !== "pro" && tier !== "max") {
+          sendJson(res, 400, { error: "Invalid subscription tier" });
+          return;
+        }
+
         if (!body.telegramAuth) {
           sendJson(res, 400, { error: "Telegram login required" });
           return;
         }
 
-        const session = await startWebCheckout(plan, body.telegramAuth);
+        const session = await startWebCheckout(plan, tier, body.telegramAuth);
         sendJson(res, 200, { checkout: session });
       } catch (err) {
         console.error("[api] POST /api/checkout failed:", err);

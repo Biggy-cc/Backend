@@ -6,11 +6,13 @@ import {
   verifyTelegramLogin,
   type TelegramLoginPayload,
 } from "./telegram-auth.js";
+import type { BillingCycle, SubscriptionTier } from "../config/pricing.js";
 
 type PendingPaymentRow = {
   id: string;
   telegram_id: number;
-  plan: "monthly" | "yearly";
+  plan: BillingCycle;
+  tier: SubscriptionTier;
   amount_usdc: number;
   reference: string;
   fulfilled_at: string | null;
@@ -18,7 +20,8 @@ type PendingPaymentRow = {
 
 export type CheckoutSession = {
   paymentId: string;
-  plan: "monthly" | "yearly";
+  plan: BillingCycle;
+  tier: SubscriptionTier;
   amount: number;
   recipient: string;
   mint: string;
@@ -47,7 +50,7 @@ type CheckoutProfile = {
 
 function subscriptionFields(
   user: Awaited<ReturnType<typeof getUser>>,
-  plan: "monthly" | "yearly",
+  plan: BillingCycle,
   fulfilled: boolean
 ): Pick<
   CheckoutSession,
@@ -87,7 +90,7 @@ function subscriptionFields(
 }
 
 function toCheckoutSession(
-  row: Pick<PendingPaymentRow, "id" | "telegram_id" | "plan" | "amount_usdc" | "reference" | "fulfilled_at">,
+  row: Pick<PendingPaymentRow, "id" | "telegram_id" | "plan" | "tier" | "amount_usdc" | "reference" | "fulfilled_at">,
   reference: string,
   profile: CheckoutProfile,
   user: Awaited<ReturnType<typeof getUser>>
@@ -98,7 +101,9 @@ function toCheckoutSession(
   }
 
   const mint = process.env.USDC_MINT ?? "";
-  const message = row.plan === "monthly" ? "Biggy Monthly" : "Biggy Yearly";
+  const tierLabel = row.tier === "max" ? "Max" : "Pro";
+  const cycleLabel = row.plan === "monthly" ? "Monthly" : "Yearly";
+  const message = `Biggy ${tierLabel} ${cycleLabel}`;
   const solana = `solana:${receiver}?amount=${row.amount_usdc}&spl-token=${mint}&reference=${reference}&label=Biggy&message=${encodeURIComponent(message)}`;
 
   const params = new URLSearchParams({
@@ -113,6 +118,7 @@ function toCheckoutSession(
   return {
     paymentId: row.id,
     plan: row.plan,
+    tier: row.tier,
     amount: row.amount_usdc,
     recipient: receiver,
     mint,
@@ -151,7 +157,8 @@ async function resolveCheckoutProfile(
 }
 
 export async function startWebCheckout(
-  plan: "monthly" | "yearly",
+  plan: BillingCycle,
+  tier: SubscriptionTier,
   telegramAuth: TelegramLoginPayload
 ): Promise<CheckoutSession> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -170,7 +177,7 @@ export async function startWebCheckout(
     telegramAuth.photo_url ?? undefined
   );
 
-  const link = await createPaymentLink(telegramAuth.id, plan);
+  const link = await createPaymentLink(telegramAuth.id, plan, tier);
 
   const profile = await resolveCheckoutProfile(telegramAuth.id, {
     telegramUsername: telegramAuth.username ?? null,
@@ -184,6 +191,7 @@ export async function startWebCheckout(
       id: link.paymentId,
       telegram_id: telegramAuth.id,
       plan,
+      tier,
       amount_usdc: link.amount,
       reference: link.reference,
       fulfilled_at: null,
@@ -198,7 +206,7 @@ export async function getCheckoutSession(
   paymentId: string
 ): Promise<CheckoutSession | null> {
   const row = await dbGet<PendingPaymentRow>(
-    `SELECT id, telegram_id, plan, amount_usdc, reference, fulfilled_at
+    `SELECT id, telegram_id, plan, tier, amount_usdc, reference, fulfilled_at
      FROM pending_payments WHERE id = ?`,
     paymentId
   );
@@ -217,8 +225,8 @@ export async function createBotSubscribeLinks(telegramId: number): Promise<{
   yearlyId: string;
 }> {
   const [monthly, yearly] = await Promise.all([
-    createPaymentLink(telegramId, "monthly"),
-    createPaymentLink(telegramId, "yearly"),
+    createPaymentLink(telegramId, "monthly", "pro"),
+    createPaymentLink(telegramId, "yearly", "pro"),
   ]);
 
   return {

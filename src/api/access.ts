@@ -17,6 +17,7 @@ export type RenewPreview = {
 
 export type AccessStatus = {
   subscribed: boolean;
+  tier: "pro" | "max";
   activeUntil: string | null;
   activeUntilLabel: string | null;
   renewPreview: {
@@ -59,6 +60,7 @@ export async function getWebAccess(
 
   return {
     subscribed,
+    tier: user?.subscription_tier === "max" ? "max" : "pro",
     activeUntil,
     activeUntilLabel: activeUntil ? formatSubscriptionDate(activeUntil) : null,
     renewPreview: {

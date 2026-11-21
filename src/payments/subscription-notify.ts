@@ -1,9 +1,11 @@
 import type { Api } from "grammy";
 import { getUser, userDisplayName, formatSubscriptionDate } from "../db/users.js";
+import type { BillingCycle, SubscriptionTier } from "../config/pricing.js";
 
 export type NewSubscription = {
   telegramId: number;
-  plan: "monthly" | "yearly";
+  plan: BillingCycle;
+  tier: SubscriptionTier;
   amountUsdc: number;
   renewsUntil: string;
 };
@@ -42,12 +44,13 @@ export async function notifyNewSubscription(
     user?.first_name ?? null
   );
   const planLabel = subscription.plan === "monthly" ? "Monthly" : "Yearly";
+  const tierLabel = subscription.tier === "max" ? "Max" : "Pro";
 
   const text = [
-    "🎉 New Biggy Premium subscription",
+    `🎉 New Biggy ${tierLabel} subscription`,
     "",
     `User: ${label}`,
-    `Plan: ${planLabel} · $${subscription.amountUsdc} USDC`,
+    `Plan: ${tierLabel} ${planLabel} · $${subscription.amountUsdc} USDC`,
     `Active until: ${formatSubscriptionDate(subscription.renewsUntil)}`,
   ].join("\n");
 

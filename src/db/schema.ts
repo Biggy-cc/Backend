@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   photo_url TEXT,
   trial_started_at TEXT NOT NULL DEFAULT (datetime('now')),
   subscribed_until TEXT,
+  subscription_tier TEXT NOT NULL DEFAULT 'pro' CHECK (subscription_tier IN ('pro', 'max')),
   early_bird INTEGER NOT NULL DEFAULT 0,
   trial_picks_used INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS pending_payments (
   id TEXT PRIMARY KEY,
   telegram_id INTEGER NOT NULL,
   plan TEXT NOT NULL CHECK (plan IN ('monthly', 'yearly')),
+  tier TEXT NOT NULL DEFAULT 'pro' CHECK (tier IN ('pro', 'max')),
   amount_usdc REAL NOT NULL,
   reference TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -71,4 +73,6 @@ export const SQLITE_ALTER_STATEMENTS = [
   `ALTER TABLE users ADD COLUMN trial_picks_used INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN first_name TEXT`,
   `ALTER TABLE users ADD COLUMN photo_url TEXT`,
+  `ALTER TABLE users ADD COLUMN subscription_tier TEXT NOT NULL DEFAULT 'pro'`,
+  `ALTER TABLE pending_payments ADD COLUMN tier TEXT NOT NULL DEFAULT 'pro'`,
 ];

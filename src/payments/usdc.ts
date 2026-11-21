@@ -7,16 +7,23 @@ import {
 } from "@solana/web3.js";
 import { dbAll, dbRun } from "../db/client.js";
 import { extendSubscriptionUntil, getUser } from "../db/users.js";
-import { planAmountUsdc } from "../config/pricing.js";
+import {
+  planAmountUsdc,
+  type BillingCycle,
+  type SubscriptionTier,
+} from "../config/pricing.js";
 
 function buildWalletPayUrls(
   receiver: string,
   amount: number,
   reference: string,
-  plan: "monthly" | "yearly"
+  plan: BillingCycle,
+  tier: SubscriptionTier
 ): { solana: string; phantom: string; solflare: string } {
   const mint = process.env.USDC_MINT ?? "";
-  const message = plan === "monthly" ? "Biggy Monthly" : "Biggy Yearly";
+  const tierLabel = tier === "max" ? "Max" : "Pro";
+  const cycleLabel = plan === "monthly" ? "Monthly" : "Yearly";
+  const message = `Biggy ${tierLabel} ${cycleLabel}`;
   const solana = `solana:${receiver}?amount=${amount}&spl-token=${mint}&reference=${reference}&label=Biggy&message=${encodeURIComponent(message)}`;
 
   const params = new URLSearchParams({
@@ -37,7 +44,8 @@ function buildWalletPayUrls(
 
 export async function createPaymentLink(
   telegramId: number,
-  plan: "monthly" | "yearly"
+  plan: BillingCycle,
+  tier: SubscriptionTier = "pro"
 ): Promise<{
   url: string;
   phantomUrl: string;
@@ -49,7 +57,7 @@ export async function createPaymentLink(
   const receiver = process.env.USDC_RECEIVER_WALLET;
   if (!receiver) throw new Error("USDC_RECEIVER_WALLET missing");
 
-  const amount = planAmountUsdc(telegramId, plan);
+  const amount = planAmountUsdc(telegramId, plan, tier);
 
   // Solana Pay requires a real pubkey as reference — text IDs break wallet deep links.
   const referenceKey = Keypair.generate().publicKey.toBase58();
@@ -57,22 +65,24 @@ export async function createPaymentLink(
 
   await dbRun(
     `DELETE FROM pending_payments
-     WHERE telegram_id = ? AND plan = ? AND fulfilled_at IS NULL`,
+     WHERE telegram_id = ? AND plan = ? AND tier = ? AND fulfilled_at IS NULL`,
     telegramId,
-    plan
+    plan,
+    tier
   );
 
   await dbRun(
-    `INSERT INTO pending_payments (id, telegram_id, plan, amount_usdc, reference)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO pending_payments (id, telegram_id, plan, tier, amount_usdc, reference)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     id,
     telegramId,
     plan,
+    tier,
     amount,
     referenceKey
   );
 
-  const urls = buildWalletPayUrls(receiver, amount, referenceKey, plan);
+  const urls = buildWalletPayUrls(receiver, amount, referenceKey, plan, tier);
 
   return {
     url: urls.solana,
@@ -118,7 +128,8 @@ function txIncludesReference(tx: ParsedTransactionWithMeta, reference: PublicKey
 
 export type PaidSubscription = {
   telegramId: number;
-  plan: "monthly" | "yearly";
+  plan: BillingCycle;
+  tier: SubscriptionTier;
   amountUsdc: number;
   renewsUntil: string;
 };
@@ -140,7 +151,8 @@ export async function checkPendingPayments(
   const pending = await dbAll<{
     id: string;
     telegram_id: number;
-    plan: "monthly" | "yearly";
+    plan: BillingCycle;
+    tier: SubscriptionTier;
     amount_usdc: number;
     reference: string;
   }>(
@@ -189,8 +201,11 @@ export async function checkPendingPayments(
       const until = extendSubscriptionUntil(user?.subscribed_until, payment.plan);
 
       await dbRun(
-        `UPDATE users SET subscribed_until = ?, early_bird = 1 WHERE telegram_id = ?`,
+        `UPDATE users
+         SET subscribed_until = ?, subscription_tier = ?, early_bird = 1
+         WHERE telegram_id = ?`,
         until.toISOString(),
+        payment.tier,
         payment.telegram_id
       );
 
@@ -202,6 +217,7 @@ export async function checkPendingPayments(
       await onPaid({
         telegramId: payment.telegram_id,
         plan: payment.plan,
+        tier: payment.tier,
         amountUsdc: payment.amount_usdc,
         renewsUntil: until.toISOString(),
       });
