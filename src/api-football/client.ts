@@ -143,15 +143,27 @@ const recentTeamResultsCache = new Map<
 >();
 /** Stop outbound API-Football calls until this time after a provider 429 / daily cap. */
 let providerRateLimitedUntil = 0;
-/** Free tier is ~10 req/min — serialize outbound calls with a floor gap. */
+/** Space provider requests across all consumers, including concurrent chat research. */
 let lastApiFootballCallAt = 0;
+let providerSlot: Promise<void> = Promise.resolve();
 const FREE_MIN_GAP_MS = 7_000;
+const PAID_MIN_GAP_MS = 1_000;
+const MINUTE_LIMIT_COOLDOWN_MS = 65_000;
 
-async function throttleFreeTier(): Promise<void> {
+async function throttleProvider(): Promise<void> {
   const cfg = getApiFootballConfig();
-  if (cfg.quotaMode !== "free") return;
-  const wait = FREE_MIN_GAP_MS - (Date.now() - lastApiFootballCallAt);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  const minimumGap = cfg.quotaMode === "free" ? FREE_MIN_GAP_MS : PAID_MIN_GAP_MS;
+  const slot = providerSlot.then(async () => {
+    const wait = minimumGap - (Date.now() - lastApiFootballCallAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    if (isApiFootballProviderPaused()) {
+      throw new Error(`API-Football provider rate-limited until ${new Date(providerRateLimitedUntil).toISOString()}`);
+    }
+    assertBudget(1);
+    lastApiFootballCallAt = Date.now();
+  });
+  providerSlot = slot.catch(() => {});
+  await slot;
 }
 
 function pauseProviderUntil(msFromNowOrAbsolute: number, reason: string): void {
@@ -178,10 +190,10 @@ function nextUtcMidnightPlus(min = 5): number {
   );
 }
 
-function isQuotaExhaustedMessage(msg: string): boolean {
-  return /request limit for the day|reached the request limit|Too many requests|rateLimit|rate-limited/i.test(
-    msg
-  );
+export function classifyApiFootballLimit(msg: string, status?: number): "daily" | "minute" | null {
+  if (/request limit for the day|daily (?:request |quota )?limit|(?:limit|quota).{0,40}per day/i.test(msg)) return "daily";
+  if (/per minute|too many requests|rateLimit/i.test(msg) || status === 429) return "minute";
+  return null;
 }
 
 export function isApiFootballProviderPaused(): boolean {
@@ -222,17 +234,13 @@ async function apiGet<T>(
     );
   }
   assertBudget(1);
-  await throttleFreeTier();
-  lastApiFootballCallAt = Date.now();
+  await throttleProvider();
   try {
     const res = await getClient().get<ApiEnvelope<T>>(path, { params });
     recordApiFootballCall(1);
     const errors = res.data?.errors;
     if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
       const errText = JSON.stringify(errors);
-      if (isQuotaExhaustedMessage(errText)) {
-        pauseProviderUntil(nextUtcMidnightPlus(5), `quota error on ${path}`);
-      }
       throw new Error(`API-Football error on ${path}: ${errText}`);
     }
     const remaining = res.headers["x-ratelimit-requests-remaining"];
@@ -248,16 +256,20 @@ async function apiGet<T>(
     return res.data.response;
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (status === 429 || isQuotaExhaustedMessage(msg)) {
+    const responseData = (err as { response?: { data?: unknown } })?.response?.data;
+    const msg = `${err instanceof Error ? err.message : String(err)} ${responseData ? JSON.stringify(responseData) : ""}`;
+    const limit = classifyApiFootballLimit(msg, status);
+    if (limit === "daily") {
+      pauseProviderUntil(nextUtcMidnightPlus(5), `daily quota on ${path}`);
+    } else if (limit === "minute") {
       const retryAfter = Number(
         (err as { response?: { headers?: Record<string, string> } })?.response
           ?.headers?.["retry-after"]
       );
       if (Number.isFinite(retryAfter) && retryAfter > 0) {
-        pauseProviderUntil(retryAfter * 1000, `429 on ${path}`);
+        pauseProviderUntil(retryAfter * 1000, `short-term rate limit on ${path}`);
       } else {
-        pauseProviderUntil(nextUtcMidnightPlus(5), `quota/429 on ${path}`);
+        pauseProviderUntil(MINUTE_LIMIT_COOLDOWN_MS, `short-term rate limit on ${path}`);
       }
     }
     throw err;
@@ -812,7 +824,7 @@ export async function warmApiFootballOdds(
         `[api-football] odds fixture=${fixture.FixtureId} failed:`,
         status ?? msg.slice(0, 160)
       );
-      if (status === 429 || isQuotaExhaustedMessage(msg)) break;
+      if (isApiFootballProviderPaused() || classifyApiFootballLimit(msg, status)) break;
     }
   }
   if (filled) {
