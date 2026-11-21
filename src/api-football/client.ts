@@ -37,8 +37,8 @@ type ApiFixtureRow = {
   };
   league: { id: number; name: string; country?: string; season?: number };
   teams: {
-    home: { id: number; name: string };
-    away: { id: number; name: string };
+    home: { id: number; name: string; logo?: string };
+    away: { id: number; name: string; logo?: string };
   };
 };
 
@@ -185,6 +185,8 @@ function toFixture(row: ApiFixtureRow): TxlineFixture {
       ? `${row.league.name} (${row.league.country})`
       : row.league.name,
     CompetitionId: row.league.id,
+    Participant1Logo: row.teams.home.logo,
+    Participant2Logo: row.teams.away.logo,
   };
 }
 
@@ -527,6 +529,8 @@ export type ApiFootballScore = {
   finished: boolean;
   status: string;
   competition?: string;
+  homeLogo?: string;
+  awayLogo?: string;
 };
 
 type ApiFixtureScoreRow = {
@@ -536,8 +540,8 @@ type ApiFixtureScoreRow = {
     status?: { short?: string };
   };
   teams: {
-    home: { id: number; name: string };
-    away: { id: number; name: string };
+    home: { id: number; name: string; logo?: string };
+    away: { id: number; name: string; logo?: string };
   };
   goals?: { home: number | null; away: number | null };
   score?: {
@@ -579,6 +583,8 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
       finished: false,
       status,
       competition: row.league?.name,
+      homeLogo: row.teams.home.logo,
+      awayLogo: row.teams.away.logo,
     };
   }
 
@@ -591,6 +597,8 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     finished,
     status,
     competition: row.league?.name,
+    homeLogo: row.teams.home.logo,
+    awayLogo: row.teams.away.logo,
   };
 }
 

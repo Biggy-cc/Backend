@@ -9,6 +9,8 @@ export type TxlineFixture = {
   StartTime: number;
   Competition: string;
   CompetitionId: number;
+  Participant1Logo?: string;
+  Participant2Logo?: string;
 };
 
 export type TxlineOddsEntry = {

@@ -12,6 +12,7 @@ import { teamToCountryCode } from "./teamCountryCodes.js";
 export type FixtureApiTeam = {
   name: string;
   countryCode: string | null;
+  logoUrl?: string;
 };
 
 export type FixtureApiItem = {
@@ -63,10 +64,12 @@ export async function getUpcomingFixturesPayload(): Promise<FixtureApiItem[]> {
       home: {
         name: f.Participant1,
         countryCode: teamToCountryCode(f.Participant1),
+        logoUrl: f.Participant1Logo,
       },
       away: {
         name: f.Participant2,
         countryCode: teamToCountryCode(f.Participant2),
+        logoUrl: f.Participant2Logo,
       },
       kickoffAt: new Date(fixtureKickoffMs(f)).toISOString(),
       competition: f.Competition,

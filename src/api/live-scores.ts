@@ -12,6 +12,8 @@ export type LiveScoreApiItem = {
   status: string;
   clock: string;
   competition?: string;
+  homeLogo?: string;
+  awayLogo?: string;
 };
 
 function clockFor(status: string): string {
@@ -37,5 +39,7 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
       status: row.status,
       clock: clockFor(row.status.toUpperCase()),
       competition: row.competition,
+      homeLogo: row.homeLogo,
+      awayLogo: row.awayLogo,
     }));
 }
