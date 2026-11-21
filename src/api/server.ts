@@ -9,6 +9,7 @@ import { getTelegramBotInfo } from "./telegram-bot.js";
 import { proxySolanaRpc } from "./solana-rpc.js";
 import type { TelegramLoginPayload } from "./telegram-auth.js";
 import { askBiggy } from "../chat/assistant.js";
+import { getLiveScoresPayload } from "./live-scores.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +65,24 @@ export function startApiServer(port: number) {
       } catch (err) {
         console.error("[api] /api/fixtures failed:", err);
         sendJson(res, 502, { error: "Could not load fixtures" });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url === "/api/live-scores") {
+      try {
+        const matches = await Promise.race([
+          getLiveScoresPayload(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("live scores timeout")), 12_000)
+          ),
+        ]);
+        sendJson(res, 200, { matches, asOf: new Date().toISOString() }, {
+          "Cache-Control": "public, max-age=45",
+        });
+      } catch (err) {
+        console.error("[api] /api/live-scores failed:", err);
+        sendJson(res, 502, { error: "Could not load live scores" });
       }
       return;
     }

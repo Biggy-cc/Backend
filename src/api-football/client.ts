@@ -526,6 +526,7 @@ export type ApiFootballScore = {
   away: number;
   finished: boolean;
   status: string;
+  competition?: string;
 };
 
 type ApiFixtureScoreRow = {
@@ -543,6 +544,7 @@ type ApiFixtureScoreRow = {
     fulltime?: { home: number | null; away: number | null };
     penalty?: { home: number | null; away: number | null };
   };
+  league?: { name?: string };
 };
 
 const FT_STATUS = new Set(["FT", "AET", "PEN", "AWD", "WO"]);
@@ -575,6 +577,7 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
       away: 0,
       finished: false,
       status,
+      competition: row.league?.name,
     };
   }
 
@@ -586,6 +589,7 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     away: Number(ftAway ?? row.goals?.away ?? 0),
     finished,
     status,
+    competition: row.league?.name,
   };
 }
 
