@@ -212,6 +212,22 @@ export async function askBiggy(
   timezone = "UTC"
 ): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
+  const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
+  const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
+  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
+  let verifiedParlayContext = "";
+  if (requiresParlayApproval) {
+    const requestedRisk = /\b(?:safe|hit)\b/i.test(message) ? "safe" : /\b(?:go big|go_big)\b/i.test(message) ? "go_big" : "balanced";
+    const tier = requestedRisk === "safe" ? "hit" : requestedRisk === "go_big" ? "go_big" : "aim";
+    const date = todayPickDate();
+    const saved = await getCachedPick(date, tier);
+    if (saved) {
+      verifiedParlayContext = `VERIFIED PARLAY CONTEXT: A saved ${requestedRisk} card exists for ${date}: ${JSON.stringify(saved).slice(0, 10_000)}`;
+    } else {
+      const fixtures = await getUpcomingFixturesPayload();
+      verifiedParlayContext = `VERIFIED PARLAY CONTEXT: No saved ${requestedRisk} card exists for ${date}. Research and build a fresh ${requestedRisk} proposal from these verified upcoming fixtures: ${JSON.stringify(fixtures).slice(0, 12_000)}`;
+    }
+  }
   const base = {
     model,
     instructions: [
@@ -235,6 +251,7 @@ export async function askBiggy(
       "If get_daily_parlay has no saved card, immediately use get_upcoming_matches, choose suitable fixtures, call analyze_match for the candidate matchups, and then call propose_parlay_for_approval.",
       "Default to balanced risk when the user requests a parlay without a risk level. If the user later replies yes, safe, balanced or go big, continue the active parlay task using that answer; do not restart the conversation or repeat that no saved card exists.",
       "Never report the absence of a saved parlay more than once in the same task. The fallback is to research and build a fresh proposal, not to stop.",
+      "When VERIFIED PARLAY CONTEXT is supplied in the input, do not call get_daily_parlay or get_upcoming_matches again. Use the supplied fixtures, analyze the candidate matchups, and proceed to the approval proposal.",
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
     tools: TOOLS,
@@ -244,12 +261,10 @@ export async function askBiggy(
 
   const input = [
     ...history.slice(-10).map((item) => ({ role: item.role, content: item.content.slice(0, 2_000) })),
+    ...(verifiedParlayContext ? [{ role: "user" as const, content: verifiedParlayContext }] : []),
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
-  const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
-  const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
-  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
   let forcedProposal = false;
   let response = await callOpenAi({ ...base, input });
   for (let round = 0; round < 5; round += 1) {
