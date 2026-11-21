@@ -21,6 +21,17 @@ type OpenAiResponse = {
   error?: { message?: string };
 };
 
+export type ProposedParlay = {
+  title: string;
+  risk: "safe" | "balanced" | "go_big";
+  legs: Array<{
+    home: string;
+    away: string;
+    selection: string;
+    kickoffAt: string;
+  }>;
+};
+
 const TOOLS = [
   {
     type: "function",
@@ -79,6 +90,37 @@ const TOOLS = [
         },
       },
       required: ["risk"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "propose_parlay_for_approval",
+    description: "Present a researched parlay proposal to the user for explicit approval. Calling this does not create or track the parlay.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        risk: { type: "string", enum: ["safe", "balanced", "go_big"] },
+        legs: {
+          type: "array",
+          minItems: 2,
+          maxItems: 8,
+          items: {
+            type: "object",
+            properties: {
+              home: { type: "string" },
+              away: { type: "string" },
+              selection: { type: "string" },
+              kickoffAt: { type: "string", description: "ISO 8601 kickoff time." },
+            },
+            required: ["home", "away", "selection", "kickoffAt"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["title", "risk", "legs"],
       additionalProperties: false,
     },
     strict: true,
@@ -149,7 +191,7 @@ export async function askBiggy(
   message: string,
   history: BiggyChatMessage[] = [],
   timezone = "UTC"
-): Promise<{ answer: string; model: string }> {
+): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const base = {
     model,
@@ -163,6 +205,8 @@ export async function askBiggy(
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
       "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
+      "When you recommend a specific multi-leg parlay, you MUST call propose_parlay_for_approval. A proposal is never approved or tracked automatically.",
+      "Tell the user to review the proposal card and approve it before its matches are tracked.",
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
     tools: TOOLS,
@@ -174,21 +218,32 @@ export async function askBiggy(
     ...history.slice(-10).map((item) => ({ role: item.role, content: item.content.slice(0, 2_000) })),
     { role: "user", content: message },
   ];
+  let proposedParlay: ProposedParlay | undefined;
   let response = await callOpenAi({ ...base, input });
   for (let round = 0; round < 3; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {
       const answer = extractText(response);
       if (!answer) throw new Error("OpenAI returned an empty answer");
-      return { answer, model };
+      return { answer, model, ...(proposedParlay ? { parlay: proposedParlay } : {}) };
     }
 
     const toolOutputs = await Promise.all(
-      calls.map(async (call) => ({
-        type: "function_call_output",
-        call_id: call.call_id,
-        output: JSON.stringify(await runTool(call.name ?? "", call.arguments)),
-      }))
+      calls.map(async (call) => {
+        if (call.name === "propose_parlay_for_approval") {
+          proposedParlay = JSON.parse(call.arguments || "{}") as ProposedParlay;
+          return {
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify({ status: "awaiting_user_approval" }),
+          };
+        }
+        return {
+          type: "function_call_output",
+          call_id: call.call_id,
+          output: JSON.stringify(await runTool(call.name ?? "", call.arguments)),
+        };
+      })
     );
     response = await callOpenAi({
       ...base,
