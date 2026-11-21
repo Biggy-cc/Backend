@@ -185,8 +185,8 @@ function toFixture(row: ApiFixtureRow): TxlineFixture {
       ? `${row.league.name} (${row.league.country})`
       : row.league.name,
     CompetitionId: row.league.id,
-    Participant1Logo: row.teams.home.logo,
-    Participant2Logo: row.teams.away.logo,
+    Participant1Logo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
+    Participant2Logo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
   };
 }
 
@@ -583,8 +583,8 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
       finished: false,
       status,
       competition: row.league?.name,
-      homeLogo: row.teams.home.logo,
-      awayLogo: row.teams.away.logo,
+      homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
+      awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
     };
   }
 
@@ -597,8 +597,8 @@ function parseScoreRow(row: ApiFixtureScoreRow): ApiFootballScore | null {
     finished,
     status,
     competition: row.league?.name,
-    homeLogo: row.teams.home.logo,
-    awayLogo: row.teams.away.logo,
+    homeLogo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
+    awayLogo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
   };
 }
 
