@@ -42,6 +42,18 @@ type ApiFixtureRow = {
   };
 };
 
+type ApiTeamSearchRow = {
+  team: { id: number; name: string; logo?: string; country?: string };
+};
+
+export type ApiFootballTeamFixture = {
+  id: number;
+  kickoffAt: string;
+  competition: string;
+  home: { name: string; logo?: string };
+  away: { name: string; logo?: string };
+};
+
 type ApiOddValue = { value: string; odd: string };
 type ApiBet = { id: number; name: string; values: ApiOddValue[] };
 type ApiOddsRow = {
@@ -195,6 +207,39 @@ const NS = new Set(["NS", "TBD", "SCH"]);
 function isUpcomingStatus(short?: string): boolean {
   if (!short) return true;
   return NS.has(short.toUpperCase());
+}
+
+/** Resolve a club by name, then return its next scheduled fixtures. */
+export async function fetchApiFootballNextFixturesForTeam(
+  teamName: string,
+  limit = 5
+): Promise<{ team: string; fixtures: ApiFootballTeamFixture[] } | null> {
+  const candidates = await apiGet<ApiTeamSearchRow[]>("/teams", { search: teamName });
+  const query = teamName.trim().toLowerCase();
+  const match = (candidates ?? []).find((row) => row.team.name.toLowerCase() === query)
+    ?? candidates?.[0];
+  if (!match?.team?.id) return null;
+
+  const rows = await apiGet<ApiFixtureRow[]>("/fixtures", {
+    team: match.team.id,
+    next: Math.max(1, Math.min(limit, 10)),
+  });
+  return {
+    team: match.team.name,
+    fixtures: (rows ?? []).map((row) => ({
+      id: row.fixture.id,
+      kickoffAt: row.fixture.date,
+      competition: row.league.name,
+      home: {
+        name: row.teams.home.name,
+        logo: row.teams.home.logo ?? `https://media.api-sports.io/football/teams/${row.teams.home.id}.png`,
+      },
+      away: {
+        name: row.teams.away.name,
+        logo: row.teams.away.logo ?? `https://media.api-sports.io/football/teams/${row.teams.away.id}.png`,
+      },
+    })),
+  };
 }
 
 function ymdUtc(d: Date): string {

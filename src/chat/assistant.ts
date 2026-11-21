@@ -1,6 +1,7 @@
 import { getUpcomingFixturesPayload } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
+import { fetchApiFootballNextFixturesForTeam } from "../api-football/client.js";
 
 type ResponseItem = {
   type?: string;
@@ -30,6 +31,20 @@ const TOOLS = [
     name: "get_upcoming_matches",
     description: "Get Biggy's verified upcoming football fixtures for the next seven days.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "get_team_schedule",
+    description: "Find a football club by name and get its next five scheduled fixtures.",
+    parameters: {
+      type: "object",
+      properties: {
+        team: { type: "string", description: "Full or common club name, for example Manchester United." },
+      },
+      required: ["team"],
+      additionalProperties: false,
+    },
     strict: true,
   },
   {
@@ -89,6 +104,12 @@ async function runTool(name: string, rawArguments: string | undefined): Promise<
   if (name === "get_upcoming_matches") {
     return { asOf: new Date().toISOString(), fixtures: await getUpcomingFixturesPayload() };
   }
+  if (name === "get_team_schedule") {
+    const parsed = JSON.parse(rawArguments || "{}") as { team?: string };
+    if (!parsed.team?.trim()) return { error: "Team name is required" };
+    return await fetchApiFootballNextFixturesForTeam(parsed.team.trim(), 5)
+      ?? { error: `No team found for ${parsed.team}` };
+  }
   if (name === "get_daily_parlay") {
     const parsed = JSON.parse(rawArguments || "{}") as { risk?: string };
     const tier = parsed.risk === "safe" ? "hit" : parsed.risk === "go_big" ? "go_big" : "aim";
@@ -110,6 +131,7 @@ export async function askBiggy(
     instructions: [
       "You are Biggy, a concise and friendly football assistant.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
+      "Use get_team_schedule whenever the user asks when a named club plays, its next game, or its upcoming schedule.",
       "Use the supplied tools whenever the user asks about current fixtures, scores, or a Biggy parlay.",
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
       "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
