@@ -96,6 +96,7 @@ export function startApiServer(port: number) {
         const body = await readJsonBody<{
           message?: string;
           history?: Array<{ role?: string; content?: string }>;
+          timezone?: string;
         }>(req);
         const message = body.message?.trim() ?? "";
         if (!message || message.length > 1_000) {
@@ -113,7 +114,16 @@ export function startApiServer(port: number) {
             role: item.role as "user" | "assistant",
             content: item.content!.trim().slice(0, 2_000),
           }));
-        const result = await askBiggy(message, history);
+        let timezone = "UTC";
+        if (typeof body.timezone === "string" && body.timezone.length <= 64) {
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: body.timezone }).format();
+            timezone = body.timezone;
+          } catch {
+            // Keep UTC for invalid or unsupported timezone names.
+          }
+        }
+        const result = await askBiggy(message, history, timezone);
         sendJson(res, 200, result, { "Cache-Control": "no-store" });
       } catch (err) {
         console.error("[api] POST /api/chat failed:", err);

@@ -123,7 +123,8 @@ export type BiggyChatMessage = { role: "user" | "assistant"; content: string };
 
 export async function askBiggy(
   message: string,
-  history: BiggyChatMessage[] = []
+  history: BiggyChatMessage[] = [],
+  timezone = "UTC"
 ): Promise<{ answer: string; model: string }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const base = {
@@ -136,6 +137,7 @@ export async function askBiggy(
       "Never invent live scores, results, odds, injuries, fixtures, or statistics.",
       "Never substitute upcoming fixtures for live matches. Say clearly when historical data was not supplied.",
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
+      `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
     tools: TOOLS,
     reasoning: { effort: process.env.OPENAI_REASONING_EFFORT ?? "none" },
