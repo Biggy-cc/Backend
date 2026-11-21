@@ -231,6 +231,10 @@ export async function askBiggy(
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
       "When you recommend a specific multi-leg parlay, you MUST call propose_parlay_for_approval. A proposal is never approved or tracked automatically.",
       "Tell the user to review the proposal card and approve it before its matches are tracked.",
+      "A request to build, create, research or suggest a parlay is already permission to research and propose one. Do not ask whether you should research after the user has requested a parlay.",
+      "If get_daily_parlay has no saved card, immediately use get_upcoming_matches, choose suitable fixtures, call analyze_match for the candidate matchups, and then call propose_parlay_for_approval.",
+      "Default to balanced risk when the user requests a parlay without a risk level. If the user later replies yes, safe, balanced or go big, continue the active parlay task using that answer; do not restart the conversation or repeat that no saved card exists.",
+      "Never report the absence of a saved parlay more than once in the same task. The fallback is to research and build a fresh proposal, not to stop.",
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
     tools: TOOLS,
@@ -243,10 +247,12 @@ export async function askBiggy(
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
-  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message);
+  const recentParlayContext = history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
+  const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
+  const requiresParlayApproval = /\b(parlay|accumulator|acca)\b/i.test(message) || continuesParlayTask;
   let forcedProposal = false;
   let response = await callOpenAi({ ...base, input });
-  for (let round = 0; round < 3; round += 1) {
+  for (let round = 0; round < 5; round += 1) {
     const calls = (response.output ?? []).filter((item) => item.type === "function_call");
     if (calls.length === 0) {
       if (requiresParlayApproval && !proposedParlay && !forcedProposal) {
