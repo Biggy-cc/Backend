@@ -55,8 +55,7 @@ assert.equal(answer.parlay.legs[0].kickoffAt, new Date(kickoff * 1000).toISOStri
 assert.equal(answer.parlay.legs[0].fixtureId, "41", "fixture ID must come from verified data");
 assert.equal(answer.parlay.legs[0].homeLogo, "https://example.test/alpha.png", "home crest must come from verified data");
 assert.equal(answer.parlay.legs[0].awayLogo, "https://example.test/beta.png", "away crest must come from verified data");
-assert.equal(answer.parlay.legs[0].odds?.price, 1.85, "price must come from the exact provider market");
-assert.equal(answer.parlay.legs[1].odds?.price, 1.45, "total goals must match the exact line");
+assert.equal(answer.parlay.legs[0].odds, undefined, "odds are fetched separately without delaying the proposal");
 assert.equal(researchCalls, 2, "each fixture uses one research request");
 let invalidRound = 0;
 globalThis.fetch = async (_url, options) => {

@@ -38,8 +38,11 @@ globalThis.fetch = async (url, options) => {
   return new Response(JSON.stringify({ output_text: payload.previous_response_id === "p2" ? "Review this parlay." : "Hello!" }), { status: 200 });
 };
 axios.defaults.adapter = async (config) => {
-  assert.equal(config.url, "/predictions");
-  return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response: [{ teams: { home: { last_5: { form: "WWDWW" } }, away: { last_5: { form: "DLLDW" } } } }] } };
+  let response;
+  if (config.url === "/predictions") response = [{ teams: { home: { last_5: { form: "WWDWW" } }, away: { last_5: { form: "DLLDW" } } } }];
+  else if (config.url === "/odds") response = [{ fixture: { id: config.params.fixture }, bookmakers: [{ name: "Test Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "1.85" }] }, { name: "Goals Over/Under", values: [{ value: "Over 1.5", odd: "1.45" }] }] }] }];
+  else throw new Error(`Unexpected request ${config.url}`);
+  return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
 const { runMigrations } = await import("../dist/db/client.js");
 await runMigrations();
@@ -94,6 +97,13 @@ try {
     assert.notEqual(status.body.status, "failed");
   }
   assert.equal(result?.parlay?.legs.length, 2, "paid user receives a proposal that requires approval");
+  const selections = result.parlay.legs.map(({ fixtureId, selection }) => ({ fixtureId, selection }));
+  assert.equal((await request("/api/parlay-odds", { googleCredential: freeCredential, legs: selections })).status, 403);
+  const prices = await request("/api/parlay-odds", { googleCredential: paidCredential, legs: selections });
+  assert.equal(prices.status, 200);
+  assert.equal(prices.body.quotes[0].price, 1.85);
+  assert.equal(prices.body.quotes[1].price, 1.45);
+  assert.equal((await request("/api/parlay-odds", { googleCredential: paidCredential, legs: selections })).status, 429, "price updates must be rate-limited");
   console.log("Web auth integration passed: guest/free limits, Google checkout, paid access and approval-only parlay");
 } finally {
   await new Promise((resolve) => server.close(resolve));

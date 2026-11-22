@@ -18,9 +18,12 @@ import { getVerifiedGoogleAccess, upsertGoogleAccount } from "../db/google-accou
 import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
 import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
+import { getCachedFixtures } from "../api-football/cache.js";
+import { fetchMatchOdds, matchParlaySelection } from "../api-football/match-odds.js";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
 const chatJobs = new Map<string, ChatJob>();
+const oddsRefreshAt = new Map<string, number>();
 
 function isLongParlayTask(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
   if (/\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message)) return true;
@@ -191,6 +194,31 @@ export function startApiServer(port: number, host = "0.0.0.0") {
         console.error("[api] /api/standings failed:", err);
         sendJson(res, 502, { error: "Could not load standings" });
       }
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/parlay-odds") {
+      try {
+        const body = await readJsonBody<{ googleCredential?: string; legs?: Array<{ fixtureId?: string; selection?: string }> }>(req);
+        const user = await verifyGoogleCredential(body.googleCredential ?? "");
+        if ((await getVerifiedGoogleAccess(user)).tier === "free") { sendJson(res, 403, { error: "Paid access required." }); return; }
+        const legs = body.legs;
+        if (!Array.isArray(legs) || legs.length < 2 || legs.length > 3 || legs.some((leg) => !/^\d{1,10}$/.test(leg.fixtureId ?? "") || typeof leg.selection !== "string" || leg.selection.length > 120)) { sendJson(res, 400, { error: "Invalid parlay legs." }); return; }
+        const key = user.sub;
+        if (Date.now() - (oddsRefreshAt.get(key) ?? 0) < 60_000) { sendJson(res, 429, { error: "Please wait before refreshing prices." }); return; }
+        if (oddsRefreshAt.size >= 5000) oddsRefreshAt.delete(oddsRefreshAt.keys().next().value!);
+        oddsRefreshAt.set(key, Date.now());
+        const fixtures = getCachedFixtures(Number.POSITIVE_INFINITY) ?? [];
+        const quotes = await Promise.all(legs.map(async (leg) => {
+          const fixture = fixtures.find((item) => String(item.FixtureId) === leg.fixtureId);
+          if (!fixture || fixture.StartTime * 1000 <= Date.now()) return null;
+          try {
+            const data = await fetchMatchOdds(fixture.FixtureId, { home: fixture.Participant1, away: fixture.Participant2, kickoffAt: new Date(fixture.StartTime * 1000).toISOString() });
+            return "error" in data ? null : matchParlaySelection(data, leg.selection!, fixture.Participant1, fixture.Participant2);
+          } catch { return null; }
+        }));
+        sendJson(res, 200, { quotes }, { "Cache-Control": "no-store" });
+      } catch { sendJson(res, 401, { error: "Could not verify access to prices." }); }
       return;
     }
 
