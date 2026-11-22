@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { ProviderRequestQueue } from "../dist/api-football/request-queue.js";
+const { providerGapMs } = await import("../dist/api-football/client.js");
+assert.equal(providerGapMs("free", null), 7000);
+assert.equal(providerGapMs("free", 100), 7000);
+assert.equal(providerGapMs("free", 7500), 1000);
+assert.equal(providerGapMs("paid", null), 1000);
 
 let rejectNext = false;
 const queue = new ProviderRequestQueue(() => 20, () => {

@@ -41,7 +41,7 @@ globalThis.fetch = async (_url, options) => {
   if (round === 2) {
     assert.equal(payload.input.length, 2);
     assert.ok(payload.input.every((item) => JSON.parse(item.output).research));
-    return new Response(JSON.stringify({ id: "r2", output: [call("p", "propose_parlay_for_approval", { title: "Balanced parlay", risk: "balanced", legs: [
+    return new Response(JSON.stringify({ id: "r2", output: [call("p", "propose_parlay_for_approval", { title: "Balanced parlay", risk: "balanced", summary: "A proposal based on the researched match data.", legs: [
       { home: "Alpha", away: "Beta", selection: "Alpha win", kickoffAt: "wrong" },
       { home: "Gamma", away: "Delta", selection: "Over 1.5 goals", kickoffAt: "wrong" },
     ] })] }), { status: 200 });
@@ -51,6 +51,8 @@ globalThis.fetch = async (_url, options) => {
 };
 const { askBiggy } = await import("../dist/chat/assistant.js");
 const answer = await askBiggy("Help me build a balanced, researched parlay", [], "Europe/Berlin", undefined, true, async () => true);
+assert.equal(round, 2, "validated proposals should not need a third model round");
+assert.equal(answer.answer, "A proposal based on the researched match data.");
 assert.equal(answer.parlay?.legs.length, 2);
 assert.equal(answer.parlay.legs[0].kickoffAt, new Date(kickoff * 1000).toISOString(), "kickoff must come from verified fixture");
 assert.equal(answer.parlay.legs[0].fixtureId, "41", "fixture ID must come from verified data");

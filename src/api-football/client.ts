@@ -148,9 +148,15 @@ let providerRateLimitedUntil = 0;
 const FREE_MIN_GAP_MS = 7_000;
 const PAID_MIN_GAP_MS = 1_000;
 const MINUTE_LIMIT_COOLDOWN_MS = 65_000;
+let providerDailyLimit: number | null = null;
+
+/** Keep conservative free-tier pacing until the provider itself confirms a paid allowance. */
+export function providerGapMs(mode: "free" | "paid", reportedDailyLimit: number | null): number {
+  return mode === "paid" || (reportedDailyLimit !== null && reportedDailyLimit > 100) ? PAID_MIN_GAP_MS : FREE_MIN_GAP_MS;
+}
 
 const providerQueue = new ProviderRequestQueue(
-  () => getApiFootballConfig().quotaMode === "free" ? FREE_MIN_GAP_MS : PAID_MIN_GAP_MS,
+  () => providerGapMs(getApiFootballConfig().quotaMode, providerDailyLimit),
   () => {
     if (isApiFootballProviderPaused()) {
       throw new Error(`API-Football provider rate-limited until ${new Date(providerRateLimitedUntil).toISOString()}`);
@@ -233,6 +239,14 @@ export async function apiGet<T>(
     // Count attempts conservatively: timeouts and provider errors may still consume quota.
     recordApiFootballCall(1);
     const res = await getClient().get<ApiEnvelope<T>>(path, { params });
+    const reportedLimit = Number(res.headers["x-ratelimit-requests-limit"]);
+    const remainingQuota = Number(res.headers["x-ratelimit-requests-remaining"]);
+    // Remaining requests above the free plan's entire daily allocation also prove paid access.
+    const observedAllowance = Number.isFinite(reportedLimit) && reportedLimit > 0 ? reportedLimit : Number.isFinite(remainingQuota) && remainingQuota > 100 ? remainingQuota : null;
+    if (observedAllowance !== null && providerGapMs(getApiFootballConfig().quotaMode, observedAllowance) !== providerGapMs(getApiFootballConfig().quotaMode, providerDailyLimit)) {
+      providerDailyLimit = observedAllowance;
+      console.log(`[api-football] provider allowance observed; request gap=${providerGapMs(getApiFootballConfig().quotaMode, providerDailyLimit)}ms`);
+    }
     const errors = res.data?.errors;
     if (errors && (Array.isArray(errors) ? errors.length : Object.keys(errors as object).length)) {
       const errText = JSON.stringify(errors);

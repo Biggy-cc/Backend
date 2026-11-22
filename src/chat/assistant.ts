@@ -167,6 +167,7 @@ const TOOLS = [
       properties: {
         title: { type: "string" },
         risk: { type: "string", enum: ["safe", "balanced", "go_big"] },
+        summary: { type: "string", description: "A concise user-facing explanation grounded in the research. Do not discuss odds, which are fetched separately." },
         legs: {
           type: "array",
           minItems: 2,
@@ -184,7 +185,7 @@ const TOOLS = [
           },
         },
       },
-      required: ["title", "risk", "legs"],
+      required: ["title", "risk", "summary", "legs"],
       additionalProperties: false,
     },
     strict: true,
@@ -399,6 +400,7 @@ export async function askBiggy(
       "Never substitute upcoming fixtures for live matches or completed results.",
       "Parlays are informational, never guaranteed. Keep answers useful and under 250 words.",
       "When you recommend a specific multi-leg parlay, you MUST call propose_parlay_for_approval. A proposal is never approved or tracked automatically.",
+      "Put your concise evidence-based explanation in the proposal's summary. Prices are fetched separately, so do not claim odds are missing or give prices in the summary.",
       "Tell the user to review the proposal card and approve it before its matches are tracked.",
       "A request to build, create, research or suggest a parlay is already permission to research and propose one. Do not ask whether you should research after the user has requested a parlay.",
       "If get_daily_parlay has no saved card, immediately use get_upcoming_matches, choose suitable fixtures, call analyze_match for the candidate matchups, and then call propose_parlay_for_approval.",
@@ -423,6 +425,7 @@ export async function askBiggy(
     { role: "user", content: message },
   ];
   let proposedParlay: ProposedParlay | undefined;
+  let proposalSummary: string | undefined;
   let forcedProposal = false;
   let researchRequests = 0;
   let response = await callOpenAi({
@@ -463,7 +466,7 @@ export async function askBiggy(
         if (call.name === "get_daily_parlay" && (!authorizeProposal || !(await authorizeProposal()))) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not provide a parlay." }) };
         if (call.name === "propose_parlay_for_approval") {
           if (!allowParlay) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Parlays require an active paid subscription." }) };
-          const candidate = JSON.parse(call.arguments || "{}") as ProposedParlay;
+          const candidate = JSON.parse(call.arguments || "{}") as ProposedParlay & { summary?: unknown };
           const legs = Array.isArray(candidate.legs) ? candidate.legs : [];
           const matching = legs.map((leg) => parlayFixtures?.find((fixture) => nameKey(fixture.home.name) === nameKey(leg.home ?? "") && nameKey(fixture.away.name) === nameKey(leg.away ?? "")));
           const valid = legs.length >= 2 && legs.length <= 8 && matching.every((fixture, index) => fixture && researchedFixtures.has(fixture.id) && Date.parse(fixture.kickoffAt) > Date.now() && typeof legs[index].selection === "string" && legs[index].selection.trim().length > 0) && new Set(matching.map((fixture) => fixture?.id)).size === legs.length;
@@ -477,6 +480,7 @@ export async function askBiggy(
           }
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
           proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl })) };
+          if (typeof candidate.summary === "string" && candidate.summary.trim()) proposalSummary = candidate.summary.trim().slice(0, 1500);
           return {
             type: "function_call_output",
             call_id: call.call_id,
@@ -493,6 +497,7 @@ export async function askBiggy(
         }
       })
     );
+    if (proposedParlay && proposalSummary) return { answer: proposalSummary, model, parlay: proposedParlay };
     response = await callOpenAi({
       ...base,
       previous_response_id: response.id,

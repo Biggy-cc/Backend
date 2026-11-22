@@ -32,6 +32,8 @@ const pre = await fetchMatchOdds(2);
 assert.equal(pre.phase, "pre-match");
 assert.equal(pre.bookmaker, "Example Book");
 assert.equal(matchParlaySelection(pre, "Parma win", "Parma", "AS Roma")?.price, 2.25);
+assert.equal(matchParlaySelection(pre, "Parma to win", "Parma", "AS Roma")?.price, 2.25);
+assert.equal(matchParlaySelection(pre, "Parma to win or draw", "Parma", "AS Roma"), null);
 assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma"), null);
 assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma"), null);
 assert.equal(matchParlaySelection(live, "Parma win", "Parma", "AS Roma"), null, "never treat live prices as prematch");

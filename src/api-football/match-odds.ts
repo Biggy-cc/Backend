@@ -79,8 +79,8 @@ export function matchParlaySelection(odds: OddsResult, selection: string, home: 
   if (total) { marketPattern = /^(goals over under|over under|total goals)$/; outcomes = [`${total[1]} ${total[2]}`]; }
   else if (/^(both teams to score|btts)( yes)?$/.test(input)) { marketPattern = /^(both teams score|both teams to score)$/; outcomes = ["yes"]; }
   else if (/^(both teams to score|btts) no$/.test(input)) { marketPattern = /^(both teams score|both teams to score)$/; outcomes = ["no"]; }
-  else if ([`${homeName} win`, `win ${homeName}`, homeName, "home win"].includes(input)) { marketPattern = /^(match winner|fulltime result|1x2|match result)$/; outcomes = ["home", "1"]; }
-  else if ([`${awayName} win`, `win ${awayName}`, awayName, "away win"].includes(input)) { marketPattern = /^(match winner|fulltime result|1x2|match result)$/; outcomes = ["away", "2"]; }
+  else if ([`${homeName} win`, `${homeName} to win`, `win ${homeName}`, homeName, "home win"].includes(input)) { marketPattern = /^(match winner|fulltime result|1x2|match result)$/; outcomes = ["home", "1"]; }
+  else if ([`${awayName} win`, `${awayName} to win`, `win ${awayName}`, awayName, "away win"].includes(input)) { marketPattern = /^(match winner|fulltime result|1x2|match result)$/; outcomes = ["away", "2"]; }
   else if (["draw", "match draw"].includes(input)) { marketPattern = /^(match winner|fulltime result|1x2|match result)$/; outcomes = ["draw", "x"]; }
   else if ([`${homeName} or draw`, `${homeName} or draw double chance`, "home or draw", "1x"].includes(input)) { marketPattern = /^double chance$/; outcomes = ["home draw", "1x"]; }
   else if ([`${awayName} or draw`, `${awayName} or draw double chance`, "away or draw", "x2"].includes(input)) { marketPattern = /^double chance$/; outcomes = ["draw away", "away draw", "x2"]; }
