@@ -9,6 +9,49 @@ export type NewsArticle = {
   snippet?: string;
 };
 
+export type ResearchNews = { status: "reports_found" | "no_recent_reports" | "unavailable"; checkedAt: string; articles: Array<NewsArticle & { publishedAt: string; source: string }> };
+const researchCache = new Map<string, { savedAt: number; value: ResearchNews }>();
+const researchPending = new Map<string, Promise<ResearchNews>>();
+
+/** Recent RSS headlines are leads, not verified player availability. */
+export async function fetchResearchNews(teamA: string, teamB: string): Promise<ResearchNews> {
+  const key = `${teamA.toLowerCase()}|${teamB.toLowerCase()}`;
+  const cached = researchCache.get(key);
+  if (cached && Date.now() - cached.savedAt < 15 * 60_000) return cached.value;
+  const existing = researchPending.get(key);
+  if (existing) return existing;
+  const pending = (async (): Promise<ResearchNews> => {
+    const checkedAt = new Date().toISOString();
+    const query = `${teamA} ${teamB} football injury suspension team news when:7d`;
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const feed = await Promise.race([parser.parseURL(url), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("news timeout")), 3000); })]);
+      const now = Date.now();
+      const seen = new Set<string>();
+      const articles: ResearchNews["articles"] = [];
+      for (const item of feed.items ?? []) {
+        const timestamp = Date.parse(item.isoDate ?? item.pubDate ?? "");
+        const rawTitle = item.title?.trim() ?? "";
+        const link = item.link?.trim() ?? "";
+        if (!rawTitle || !link || seen.has(link) || !Number.isFinite(timestamp) || timestamp > now + 60_000 || now - timestamp > 7 * 86400_000) continue;
+        const article = { title: stripNewsOutlet(rawTitle), url: link, snippet: itemSnippet(item), publishedAt: new Date(timestamp).toISOString(), source: rawTitle.match(/\s[-–—|]\s([^|]+)$/u)?.[1]?.trim().slice(0, 80) || "Google News" };
+        if (!articleMatchesFixture(article, teamA, teamB)) continue;
+        seen.add(link); articles.push(article);
+        if (articles.length >= 4) break;
+      }
+      const value: ResearchNews = { status: articles.length ? "reports_found" : "no_recent_reports", checkedAt, articles };
+      if (researchCache.size >= 500) researchCache.delete(researchCache.keys().next().value!);
+      researchCache.set(key, { savedAt: Date.now(), value });
+      return value;
+    } catch {
+      return { status: "unavailable", checkedAt, articles: [] };
+    } finally { if (timer) clearTimeout(timer); }
+  })();
+  researchPending.set(key, pending);
+  try { return await pending; } finally { researchPending.delete(key); }
+}
+
 const SKIP_DOMAINS = new Set([
   "youtube.com",
   "reddit.com",

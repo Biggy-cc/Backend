@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import axios from "axios";
+import Parser from "rss-parser";
 
 process.env.API_FOOTBALL_KEY = "test-only";
 process.env.API_FOOTBALL_QUOTA_MODE = "paid";
@@ -16,11 +17,21 @@ setCachedFixtures([
   { FixtureId: 43, Participant1: "Epsilon", Participant2: "Zeta", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
 ]);
 let researchCalls = 0;
+let injuryCalls = 0;
+let newsCalls = 0;
+Parser.prototype.parseURL = async (url) => {
+  newsCalls++;
+  const names = decodeURIComponent(url).includes("Alpha") ? "Alpha" : "Gamma";
+  return { items: [{ title: `${names} player doubtful - Test News`, link: `https://news.example/${names}`, isoDate: new Date().toISOString() }] };
+};
 axios.defaults.adapter = async (config) => {
   let response;
   if (config.url === "/predictions") {
     researchCalls++;
     response = [{ teams: { home: { last_5: { form: "WWDLW" } }, away: { last_5: { form: "DLWDL" } } } }];
+  } else if (config.url === "/injuries") {
+    injuryCalls++;
+    response = [{ fixture: { id: 41 }, team: { name: "Alpha" }, player: { name: "Player A", type: "Questionable", reason: "Knee" } }];
   } else if (config.url === "/fixtures") {
     const id = config.params.id;
     response = [{ fixture: { id, timestamp: kickoff, date: new Date(kickoff * 1000).toISOString(), status: { short: "NS" } }, league: { name: "Premier League", country: "England" }, teams: { home: { id: 1, name: id === 41 ? "Alpha" : "Gamma" }, away: { id: 2, name: id === 41 ? "Beta" : "Delta" } }, goals: { home: null, away: null } }];
@@ -41,6 +52,12 @@ globalThis.fetch = async (_url, options) => {
   if (round === 2) {
     assert.equal(payload.input.length, 2);
     assert.ok(payload.input.every((item) => JSON.parse(item.output).research));
+    const first = JSON.parse(payload.input[0].output);
+    const second = JSON.parse(payload.input[1].output);
+    assert.equal(first.injuries.reports[0].type, "Questionable");
+    assert.equal(second.injuries.status, "no_reports", "empty results are not confirmation of a healthy squad");
+    assert.equal(first.news.articles[0].source, "Test News");
+    assert.ok(first.news.articles[0].publishedAt);
     return new Response(JSON.stringify({ id: "r2", output: [call("p", "propose_parlay_for_approval", { title: "Balanced parlay", risk: "balanced", summary: "A proposal based on the researched match data.", legs: [
       { home: "Alpha", away: "Beta", selection: "Alpha win", kickoffAt: "wrong" },
       { home: "Gamma", away: "Delta", selection: "Over 1.5 goals", kickoffAt: "wrong" },
@@ -60,6 +77,8 @@ assert.equal(answer.parlay.legs[0].homeLogo, "https://example.test/alpha.png", "
 assert.equal(answer.parlay.legs[0].awayLogo, "https://example.test/beta.png", "away crest must come from verified data");
 assert.equal(answer.parlay.legs[0].odds?.price, 1.85, "proposal must contain a verified price");
 assert.equal(researchCalls, 2, "each fixture uses one research request");
+assert.equal(injuryCalls, 1, "concurrent fixtures share one injury request");
+assert.equal(newsCalls, 2, "one news request per fixture");
 let invalidRound = 0;
 globalThis.fetch = async (_url, options) => {
   const payload = JSON.parse(options.body);

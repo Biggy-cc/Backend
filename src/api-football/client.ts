@@ -99,8 +99,9 @@ type ApiAnalysisFixtureRow = ApiFixtureRow & {
 };
 
 type ApiInjuryRow = {
-  player?: { name?: string; reason?: string };
+  player?: { name?: string; reason?: string; type?: string };
   team?: { id?: number; name?: string };
+  fixture?: { id?: number };
 };
 
 export type ApiFootballMatchContext = {
@@ -496,6 +497,75 @@ export async function fetchApiFootballMatchContext(
 
 const fixtureResearchCache = new Map<number, { savedAt: number; data: Record<string, unknown> }>();
 const fixtureResearchInFlight = new Map<number, Promise<Record<string, unknown> | null>>();
+
+export type FixtureInjuryReport = { status: "reports_found" | "no_reports" | "unavailable"; checkedAt: string; reports: Array<{ player: string; team: string; type: string; reason: string }> };
+const injuryCache = new Map<number, { savedAt: number; report: FixtureInjuryReport }>();
+const injuryBatches = new Map<string, Promise<Map<number, FixtureInjuryReport>>>();
+
+/** A single batch covers up to 20 fixtures. Empty coverage is never described as a clean bill of health. */
+export async function fetchFixtureInjuries(fixtureIds: number[]): Promise<Map<number, FixtureInjuryReport>> {
+  const ids = [...new Set(fixtureIds.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, 20);
+  const result = new Map<number, FixtureInjuryReport>();
+  const missing: number[] = [];
+  for (const id of ids) {
+    const cached = injuryCache.get(id);
+    if (cached && Date.now() - cached.savedAt < 30 * 60_000) result.set(id, cached.report);
+    else missing.push(id);
+  }
+  if (!missing.length) return result;
+  const key = [...missing].sort((a, b) => a - b).join("-");
+  let pending = injuryBatches.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const reports = new Map<number, FixtureInjuryReport>();
+      const checkedAt = new Date().toISOString();
+      try {
+        const rows = await apiGet<ApiInjuryRow[]>("/injuries", { ids: key }, 1);
+        for (const id of missing) {
+          const items = (rows ?? []).filter((row) => row.fixture?.id === id && row.player?.name).map((row) => ({ player: row.player!.name!, team: row.team?.name ?? "Unknown team", type: row.player?.type ?? "Not specified", reason: row.player?.reason ?? "Not specified" }));
+          const report: FixtureInjuryReport = { status: items.length ? "reports_found" : "no_reports", checkedAt, reports: items.slice(0, 30) };
+          if (injuryCache.size >= 1000) injuryCache.delete(injuryCache.keys().next().value!);
+          injuryCache.set(id, { savedAt: Date.now(), report });
+          reports.set(id, report);
+        }
+      } catch (error) {
+        console.warn("[research] injury batch unavailable:", error instanceof Error ? error.message : "unknown error");
+        for (const id of missing) reports.set(id, { status: "unavailable", checkedAt, reports: [] });
+      }
+      return reports;
+    })();
+    injuryBatches.set(key, pending);
+    void pending.finally(() => injuryBatches.delete(key));
+  }
+  for (const [id, report] of await pending) result.set(id, report);
+  return result;
+}
+
+type FixtureLineups = { status: "available" | "no_lineups" | "unavailable" | "too_early"; checkedAt: string; teams: Array<{ team: string; formation: string | null; startingXI: string[] }> };
+const lineupsCache = new Map<number, { savedAt: number; value: FixtureLineups }>();
+const lineupsPending = new Map<number, Promise<FixtureLineups>>();
+
+/** Official lineups typically appear close to kickoff; avoid expensive early polling. */
+export async function fetchFixtureLineups(fixtureId: number, kickoffAt: string): Promise<FixtureLineups> {
+  const checkedAt = new Date().toISOString();
+  if (Date.parse(kickoffAt) - Date.now() > 90 * 60_000) return { status: "too_early", checkedAt, teams: [] };
+  const cached = lineupsCache.get(fixtureId);
+  if (cached && Date.now() - cached.savedAt < 10 * 60_000) return cached.value;
+  const existing = lineupsPending.get(fixtureId);
+  if (existing) return existing;
+  const pending = (async (): Promise<FixtureLineups> => {
+    try {
+      const rows = await apiGet<Array<{ team?: { name?: string }; formation?: string; startXI?: Array<{ player?: { name?: string } }> }>>("/fixtures/lineups", { fixture: fixtureId }, 1);
+      const teams = (rows ?? []).filter((row) => row.team?.name && row.startXI?.length).map((row) => ({ team: row.team!.name!, formation: row.formation ?? null, startingXI: row.startXI!.map((item) => item.player?.name).filter((name): name is string => !!name).slice(0, 11) }));
+      const value: FixtureLineups = { status: teams.length ? "available" : "no_lineups", checkedAt, teams };
+      if (lineupsCache.size >= 500) lineupsCache.delete(lineupsCache.keys().next().value!);
+      lineupsCache.set(fixtureId, { savedAt: Date.now(), value });
+      return value;
+    } catch { return { status: "unavailable", checkedAt, teams: [] }; }
+  })();
+  lineupsPending.set(fixtureId, pending);
+  try { return await pending; } finally { lineupsPending.delete(fixtureId); }
+}
 
 /** Provider's fixture-specific research in one request, shared across chats. */
 export async function fetchApiFootballFixtureResearch(fixtureId: number): Promise<Record<string, unknown> | null> {
