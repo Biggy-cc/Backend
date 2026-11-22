@@ -19,8 +19,10 @@ function marketValues(bet: Bet): OddsResult["markets"][number] | null {
 }
 
 /** Fetch only the correct kind of odds for this exact selected fixture. */
-export async function fetchMatchOdds(fixtureId: number): Promise<OddsResult | { error: string }> {
-  const selected = await fetchApiFootballSelectedMatch(fixtureId, { includeEvents: false });
+export async function fetchMatchOdds(fixtureId: number, verifiedUpcoming?: { home: string; away: string; kickoffAt: string }): Promise<OddsResult | { error: string }> {
+  const selected = verifiedUpcoming && Date.parse(verifiedUpcoming.kickoffAt) > Date.now()
+    ? { match: { status: "NS", homeTeam: verifiedUpcoming.home, awayTeam: verifiedUpcoming.away } }
+    : await fetchApiFootballSelectedMatch(fixtureId, { includeEvents: false });
   if ("error" in selected) return selected;
   const status = String(selected.match.status ?? "").toUpperCase();
   const phase = LIVE.has(status) ? "live" : PRE.has(status) ? "pre-match" : null;

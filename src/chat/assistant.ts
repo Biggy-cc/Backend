@@ -376,7 +376,7 @@ export async function askBiggy(
       "Do not mention saved cards, internal caches, tool calls, or implementation details. For a parlay, start with a concise explanation of the proposed selections and the verified evidence. Do not claim injuries, form, head-to-head results, or odds that the research did not supply. Call analyze_match for candidate fixtures in parallel where possible.",
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
-    tools: allowParlay ? TOOLS : TOOLS.filter((tool) => tool.name !== "get_daily_parlay" && tool.name !== "propose_parlay_for_approval"),
+    tools: requiresParlayApproval ? TOOLS.filter((tool) => tool.name === "analyze_match" || tool.name === "propose_parlay_for_approval") : allowParlay ? TOOLS : TOOLS.filter((tool) => tool.name !== "get_daily_parlay" && tool.name !== "propose_parlay_for_approval"),
     reasoning: { effort: process.env.OPENAI_REASONING_EFFORT ?? "none" },
     max_output_tokens: 700,
   };
@@ -390,14 +390,15 @@ export async function askBiggy(
   ];
   let proposedParlay: ProposedParlay | undefined;
   let forcedProposal = false;
+  let researchRequests = 0;
   let response = await callOpenAi({
     ...base,
     input,
-    ...(!selectedOddsContext && asksMatchOdds
+    ...(!requiresParlayApproval && !selectedOddsContext && asksMatchOdds
       ? { tool_choice: { type: "function", name: "get_match_odds" } }
-      : !selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
+      : !requiresParlayApproval && !selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
       ? { tool_choice: { type: "function", name: "get_match_events" } }
-      : requiresRecentResults
+      : !requiresParlayApproval && requiresRecentResults
       ? { tool_choice: { type: "function", name: "get_team_results" } }
       : {}),
   });
@@ -422,6 +423,8 @@ export async function askBiggy(
 
     const toolOutputs = await Promise.all(
       calls.map(async (call) => {
+        if (requiresParlayApproval && call.name !== "analyze_match" && call.name !== "propose_parlay_for_approval") return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Use the verified fixtures and analyze_match for this parlay." }) };
+        if (requiresParlayApproval && call.name === "analyze_match" && ++researchRequests > 4) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Research limit reached. Use the already researched fixtures or explain that data is unavailable." }) };
         if (!allowParlay && (call.name === "get_daily_parlay" || call.name === "propose_parlay_for_approval")) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Parlays require an active paid subscription." }) };
         if (call.name === "get_daily_parlay" && (!authorizeProposal || !(await authorizeProposal()))) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not provide a parlay." }) };
         if (call.name === "propose_parlay_for_approval") {
@@ -436,7 +439,8 @@ export async function askBiggy(
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
           const quotes = await Promise.all(legs.map(async (leg, i) => {
             try {
-              const data = await Promise.race([fetchMatchOdds(Number(matching[i]!.id)), new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000))]);
+              const fixture = matching[i]!;
+              const data = await Promise.race([fetchMatchOdds(Number(fixture.id), { home: fixture.home.name, away: fixture.away.name, kickoffAt: fixture.kickoffAt }), new Promise<null>((resolve) => setTimeout(() => resolve(null), 25_000))]);
               return data && !("error" in data) ? matchParlaySelection(data, leg.selection, matching[i]!.home.name, matching[i]!.away.name) : null;
             } catch { return null; }
           }));
@@ -447,11 +451,14 @@ export async function askBiggy(
             output: JSON.stringify({ status: "awaiting_user_approval" }),
           };
         }
-        return {
+        try { return {
           type: "function_call_output",
           call_id: call.call_id,
           output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId, parlayFixtures, researchedFixtures)),
-        };
+        }; } catch (error) {
+          console.error(`[chat] ${call.name ?? "unknown tool"} failed:`, error instanceof Error ? error.message : "unknown error");
+          return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Football data is temporarily unavailable for this request." }) };
+        }
       })
     );
     response = await callOpenAi({

@@ -228,7 +228,7 @@ export async function apiGet<T>(
     );
   }
   assertBudget(1);
-  await providerQueue.enter(priority, priority > 0 ? 10_000 : 40_000);
+  await providerQueue.enter(priority, priority >= 2 ? 10_000 : 40_000);
   try {
     // Count attempts conservatively: timeouts and provider errors may still consume quota.
     recordApiFootballCall(1);
@@ -490,7 +490,7 @@ export async function fetchApiFootballFixtureResearch(fixtureId: number): Promis
   if (cached && Date.now() - cached.savedAt < 30 * 60_000) return cached.data;
   const existing = fixtureResearchInFlight.get(fixtureId);
   if (existing) return existing;
-  const pending = apiGet<Array<Record<string, unknown>>>("/predictions", { fixture: fixtureId }).then((rows) => {
+  const pending = apiGet<Array<Record<string, unknown>>>("/predictions", { fixture: fixtureId }, 1).then((rows) => {
     const data = rows?.[0];
     if (!data || (!data.teams && !data.comparison && !data.h2h)) return null;
     if (fixtureResearchCache.size >= 500) fixtureResearchCache.delete(fixtureResearchCache.keys().next().value!);
@@ -590,7 +590,14 @@ function ymdUtc(d: Date): string {
  * (today → +N days), then optionally filter to configured leagues.
  * Cached for hours so cron/startup don't re-burn the free 100/day.
  */
+let fixturesInFlight: Promise<TxlineFixture[]> | null = null;
 export async function fetchApiFootballFixtures(): Promise<TxlineFixture[]> {
+  if (fixturesInFlight) return fixturesInFlight;
+  fixturesInFlight = loadApiFootballFixtures();
+  try { return await fixturesInFlight; } finally { fixturesInFlight = null; }
+}
+
+async function loadApiFootballFixtures(): Promise<TxlineFixture[]> {
   const cfg = getApiFootballConfig();
   const cached = getCachedFixtures(cfg.fixturesTtlMs);
   if (cached) {

@@ -33,7 +33,10 @@ let round = 0;
 globalThis.fetch = async (_url, options) => {
   const payload = JSON.parse(options.body);
   round++;
-  if (round === 1) return new Response(JSON.stringify({ id: "r1", output: [call("a", "analyze_match", { home: "Alpha", away: "Beta" }), call("b", "analyze_match", { home: "Gamma", away: "Delta" })] }), { status: 200 });
+  if (round === 1) {
+    assert.deepEqual(payload.tools.map((tool) => tool.name).sort(), ["analyze_match", "propose_parlay_for_approval"], "parlay research must not fan out into unrelated provider tools");
+    return new Response(JSON.stringify({ id: "r1", output: [call("a", "analyze_match", { home: "Alpha", away: "Beta" }), call("b", "analyze_match", { home: "Gamma", away: "Delta" })] }), { status: 200 });
+  }
   if (round === 2) {
     assert.equal(payload.input.length, 2);
     assert.ok(payload.input.every((item) => JSON.parse(item.output).research));

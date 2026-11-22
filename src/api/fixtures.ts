@@ -56,7 +56,7 @@ export async function getUpcomingFixturesPayload(options?: { localDate: string; 
     const all = await Promise.race([
       fetchFixturesSnapshot(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("fixtures snapshot timeout")), 12_000)
+        setTimeout(() => reject(new Error("fixtures snapshot timeout")), 40_000)
       ),
     ]);
 
