@@ -29,6 +29,8 @@ axios.defaults.adapter = async (config) => {
   if (config.url === "/predictions") {
     researchCalls++;
     response = [{ teams: { home: { last_5: { form: "WWDLW" } }, away: { last_5: { form: "DLWDL" } } } }];
+  } else if (config.url === "/leagues") {
+    response = [{ league: { id: 39, name: "Premier League" }, country: { name: "England" }, seasons: [{ year: 2026, current: true, coverage: { injuries: true } }] }];
   } else if (config.url === "/injuries") {
     injuryCalls++;
     response = [{ fixture: { id: 41 }, team: { name: "Alpha" }, player: { name: "Player A", type: "Questionable", reason: "Knee" } }];

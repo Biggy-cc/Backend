@@ -10,6 +10,7 @@ let requests = 0;
 axios.defaults.adapter = async (config) => {
   requests++;
   if (requests === 1) throw new Error("provider unavailable");
+  if (config.url === "/leagues") return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response: [{ league: { id: 900 }, seasons: [{ current: true, coverage: { injuries: false } }] }] } };
   if (config.url === "/fixtures/lineups") return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response: [{ team: { name: "Alpha" }, formation: "4-3-3", startXI: [{ player: { name: "Player A" } }] }] } };
   return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response: [] } };
 };
@@ -26,6 +27,8 @@ assert.equal(requests, 2, "do not poll lineups well ahead of kickoff");
 assert.equal((await fetchFixtureLineups(101, new Date(Date.now() + 30 * 60_000).toISOString())).teams[0].startingXI[0], "Player A");
 await fetchFixtureLineups(101, new Date(Date.now() + 30 * 60_000).toISOString());
 assert.equal(requests, 3, "lineups are cached");
+assert.equal((await fetchFixtureInjuries([999], new Map([[999, 900]]))).get(999).status, "not_covered");
+assert.equal(requests, 4, "known unsupported leagues must not trigger an injury lookup");
 
 let newsRequests = 0;
 Parser.prototype.parseURL = async () => {

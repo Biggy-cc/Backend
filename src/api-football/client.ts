@@ -50,7 +50,7 @@ type ApiTeamSearchRow = {
 type ApiLeagueRow = {
   league: { id: number; name: string; type?: string; logo?: string };
   country: { name?: string; code?: string; flag?: string };
-  seasons?: Array<{ year: number; current?: boolean }>;
+  seasons?: Array<{ year: number; current?: boolean; coverage?: { injuries?: boolean } }>;
 };
 
 type ApiStandingRow = {
@@ -498,16 +498,42 @@ export async function fetchApiFootballMatchContext(
 const fixtureResearchCache = new Map<number, { savedAt: number; data: Record<string, unknown> }>();
 const fixtureResearchInFlight = new Map<number, Promise<Record<string, unknown> | null>>();
 
-export type FixtureInjuryReport = { status: "reports_found" | "no_reports" | "unavailable"; checkedAt: string; reports: Array<{ player: string; team: string; type: string; reason: string }> };
+export type FixtureInjuryReport = { status: "reports_found" | "no_reports" | "unavailable" | "not_covered"; checkedAt: string; reports: Array<{ player: string; team: string; type: string; reason: string }> };
 const injuryCache = new Map<number, { savedAt: number; report: FixtureInjuryReport }>();
 const injuryBatches = new Map<string, Promise<Map<number, FixtureInjuryReport>>>();
+let injuryCoverage: { savedAt: number; values: Map<number, boolean> } | null = null;
+let injuryCoveragePending: Promise<Map<number, boolean> | null> | null = null;
+
+async function getInjuryCoverage(): Promise<Map<number, boolean> | null> {
+  if (injuryCoverage && Date.now() - injuryCoverage.savedAt < 12 * 60 * 60_000) return injuryCoverage.values;
+  if (injuryCoveragePending) return injuryCoveragePending;
+  injuryCoveragePending = (async () => {
+    try {
+      const rows = await apiGet<ApiLeagueRow[]>("/leagues", { current: "true" }, 1);
+      const values = new Map<number, boolean>();
+      for (const row of rows ?? []) {
+        const flag = row.seasons?.find((season) => season.current)?.coverage?.injuries;
+        if (typeof flag === "boolean") values.set(row.league.id, flag);
+      }
+      injuryCoverage = { savedAt: Date.now(), values };
+      return values;
+    } catch { return null; }
+  })();
+  try { return await injuryCoveragePending; } finally { injuryCoveragePending = null; }
+}
 
 /** A single batch covers up to 20 fixtures. Empty coverage is never described as a clean bill of health. */
-export async function fetchFixtureInjuries(fixtureIds: number[]): Promise<Map<number, FixtureInjuryReport>> {
+export async function fetchFixtureInjuries(fixtureIds: number[], fixtureLeagues?: Map<number, number>): Promise<Map<number, FixtureInjuryReport>> {
   const ids = [...new Set(fixtureIds.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, 20);
   const result = new Map<number, FixtureInjuryReport>();
   const missing: number[] = [];
+  const coverage = fixtureLeagues?.size ? await getInjuryCoverage() : null;
   for (const id of ids) {
+    const leagueId = fixtureLeagues?.get(id);
+    if (leagueId !== undefined && coverage?.get(leagueId) === false) {
+      result.set(id, { status: "not_covered", checkedAt: new Date().toISOString(), reports: [] });
+      continue;
+    }
     const cached = injuryCache.get(id);
     if (cached && Date.now() - cached.savedAt < 30 * 60_000) result.set(id, cached.report);
     else missing.push(id);

@@ -21,6 +21,7 @@ export type FixtureApiItem = {
   away: FixtureApiTeam;
   kickoffAt: string;
   competition?: string;
+  competitionId?: number;
 };
 
 export function selectDisplayFixtures(all: TxlineFixture[], max = 12, options?: { localDate?: string; timeZone: string; research?: boolean; query?: string }): TxlineFixture[] {
@@ -96,6 +97,7 @@ export async function getUpcomingFixturesPayload(options?: { localDate?: string;
       },
       kickoffAt: new Date(fixtureKickoffMs(f)).toISOString(),
       competition: f.Competition,
+      competitionId: f.CompetitionId,
     }));
   } catch (err) {
     console.error("[api] fixtures payload failed:", err);

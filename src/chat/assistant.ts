@@ -477,7 +477,7 @@ export async function askBiggy(
       } catch { return []; }
     }) : [];
     const extra = researchFixtures.length ? {
-      injuries: fetchFixtureInjuries(researchFixtures.map((fixture) => Number(fixture.id))),
+      injuries: fetchFixtureInjuries(researchFixtures.map((fixture) => Number(fixture.id)), new Map(researchFixtures.filter((fixture) => fixture.competitionId).map((fixture) => [Number(fixture.id), fixture.competitionId!]))),
       news: new Map(researchFixtures.map((fixture) => [fixture.id, fetchResearchNews(fixture.home.name, fixture.away.name)])),
     } : undefined;
     const toolOutputs = await Promise.all(
