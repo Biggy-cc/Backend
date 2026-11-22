@@ -9,7 +9,7 @@ process.env.FOOTBALL_DATA_PROVIDER = "api-football";
 process.env.DATABASE_BACKEND = "d1";
 process.env.OPENAI_API_KEY = "test-only";
 
-const kickoff = Math.floor((Date.now() + 86_400_000) / 1000);
+const kickoff = Math.floor((Date.now() + 3_600_000) / 1000);
 const { setCachedFixtures } = await import("../dist/api-football/cache.js");
 setCachedFixtures([
   { FixtureId: 41, Participant1: "Alpha", Participant2: "Beta", Participant1Logo: "https://example.test/alpha.png", Participant2Logo: "https://example.test/beta.png", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
@@ -81,6 +81,22 @@ assert.equal(answer.parlay.legs[0].odds?.price, 1.85, "proposal must contain a v
 assert.equal(researchCalls, 2, "each fixture uses one research request");
 assert.equal(injuryCalls, 1, "concurrent fixtures share one injury request");
 assert.equal(newsCalls, 2, "one news request per fixture");
+let targetRound = 0;
+globalThis.fetch = async (_url, options) => {
+  const payload = JSON.parse(options.body);
+  targetRound++;
+  assert.match(payload.instructions, /approximately 3\.00 combined decimal odds/);
+  if (targetRound === 1) return new Response(JSON.stringify({ id: "target-1", output: [call("a", "analyze_match", { home: "Alpha", away: "Beta" }), call("b", "analyze_match", { home: "Gamma", away: "Delta" })] }), { status: 200 });
+  assert.ok(JSON.parse(payload.input[0].output).availableOdds.length, "targeted requests receive verified prices during research");
+  return new Response(JSON.stringify({ id: "target-2", output: [call("p", "propose_parlay_for_approval", { title: "Around 3 odds", risk: "balanced", summary: "Two researched selections.", legs: [
+    { home: "Alpha", away: "Beta", selection: "Alpha win", kickoffAt: "x" },
+    { home: "Gamma", away: "Delta", selection: "Gamma win", kickoffAt: "x" },
+  ] })] }), { status: 200 });
+};
+const targetAnswer = await askBiggy("give me a great 3 odds to bet today", [], "Europe/Berlin", undefined, true, async () => true);
+assert.equal(targetAnswer.parlay?.legs.length, 2, "target odds wording should build a priced parlay");
+assert.ok(targetAnswer.parlay.legs.reduce((total, leg) => total * leg.odds.price, 1) >= 2.4);
+assert.match((await askBiggy("give me a great 3 odds to bet today", [], "Europe/Berlin", undefined, false)).answer, /subscription/i, "target odds must respect paid access");
 let invalidRound = 0;
 globalThis.fetch = async (_url, options) => {
   const payload = JSON.parse(options.body);

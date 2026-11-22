@@ -20,6 +20,7 @@ import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js"
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
 import { getCachedFixtures } from "../api-football/cache.js";
 import { fetchMatchOdds, matchParlaySelectionOptions, bestParlayQuotes } from "../api-football/match-odds.js";
+import { isParlayRequest } from "../chat/intents.js";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
 const chatJobs = new Map<string, ChatJob>();
@@ -36,11 +37,6 @@ function isLongParlayTask(message: string, history: Array<{ role: "user" | "assi
   ) return true;
   return /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message)
     && history.slice(-6).some((item) => /\b(parlay|accumulator|acca)\b/i.test(item.content));
-}
-
-function isParlayRequest(message: string, history: Array<{ role: "user" | "assistant"; content: string }>): boolean {
-  return /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(message) ||
-    (/^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message) && history.slice(-6).some((item) => /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(item.content)));
 }
 
 const CORS_HEADERS = {
