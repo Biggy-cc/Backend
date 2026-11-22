@@ -13,6 +13,7 @@ const { setCachedFixtures } = await import("../dist/api-football/cache.js");
 setCachedFixtures([
   { FixtureId: 41, Participant1: "Alpha", Participant2: "Beta", Participant1Logo: "https://example.test/alpha.png", Participant2Logo: "https://example.test/beta.png", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
   { FixtureId: 42, Participant1: "Gamma", Participant2: "Delta", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
+  { FixtureId: 43, Participant1: "Epsilon", Participant2: "Zeta", Participant1IsHome: true, StartTime: kickoff, Competition: "Premier League", CompetitionId: 39 },
 ]);
 let researchCalls = 0;
 axios.defaults.adapter = async (config) => {
@@ -89,6 +90,26 @@ globalThis.fetch = async (_url, options) => {
 const duplicate = await askBiggy("Build a balanced parlay", [], "Europe/Berlin", undefined, true, async () => true);
 assert.equal(duplicate.parlay, undefined, "duplicate fixtures must not become approval cards");
 assert.doesNotMatch(duplicate.answer, /I suggest both/, "invalid selections must not leak in prose");
+let revisionRound = 0;
+const original = answer.parlay;
+globalThis.fetch = async (_url, options) => {
+  const payload = JSON.parse(options.body);
+  revisionRound++;
+  if (revisionRound === 1) {
+    assert.ok(payload.input.some((item) => item.content?.includes("ACTIVE USER PROPOSAL TO REVISE")));
+    return new Response(JSON.stringify({ id: "revision-1", output: [call("a", "analyze_match", { home: "Alpha", away: "Beta" }), call("b", "analyze_match", { home: "Gamma", away: "Delta" }), call("c", "analyze_match", { home: "Epsilon", away: "Zeta" })] }), { status: 200 });
+  }
+  if (revisionRound === 2) return new Response(JSON.stringify({ id: "revision-2", output: [call("bad-revision", "propose_parlay_for_approval", { title: "Wrong replacement", risk: "balanced", legs: [original.legs[0], { home: "Epsilon", away: "Zeta", selection: "Epsilon win", kickoffAt: "x" }] })] }), { status: 200 });
+  if (revisionRound === 3) {
+    assert.match(JSON.parse(payload.input[0].output).error, /replace the requested match/i);
+    return new Response(JSON.stringify({ id: "revision-3", output: [call("good-revision", "propose_parlay_for_approval", { title: "Revised", risk: "balanced", legs: [original.legs[1], { home: "Epsilon", away: "Zeta", selection: "Epsilon win", kickoffAt: "x" }] })] }), { status: 200 });
+  }
+  assert.equal(JSON.parse(payload.input[0].output).status, "awaiting_user_approval");
+  return new Response(JSON.stringify({ output_text: "I replaced Alpha with Epsilon and kept your other selection." }), { status: 200 });
+};
+const revision = await askBiggy("Replace Alpha with another match", [], "Europe/Berlin", undefined, true, async () => true, original);
+assert.deepEqual(revision.parlay.legs.map((leg) => leg.home), ["Gamma", "Epsilon"]);
+assert.equal(revision.parlay.legs[0].selection, original.legs[1].selection);
 const free = await askBiggy("Build a balanced parlay", [], "Europe/Berlin", undefined, false);
 assert.match(free.answer, /requires an active Biggy Pro or Max/);
 console.log("Parlay chat test passed: researched fixtures produce an approval-only proposal");

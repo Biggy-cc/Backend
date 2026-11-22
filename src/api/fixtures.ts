@@ -51,7 +51,7 @@ function selectDisplayFixtures(all: TxlineFixture[], max = 12, options?: { local
     .slice(0, max);
 }
 
-export async function getUpcomingFixturesPayload(options?: { localDate: string; timeZone: string }): Promise<FixtureApiItem[]> {
+export async function getUpcomingFixturesPayload(options?: { localDate?: string; timeZone: string; max?: number }): Promise<FixtureApiItem[]> {
   try {
     const all = await Promise.race([
       fetchFixturesSnapshot(),
@@ -60,7 +60,7 @@ export async function getUpcomingFixturesPayload(options?: { localDate: string; 
       ),
     ]);
 
-    return selectDisplayFixtures(all, 12, options).map((f) => ({
+    return selectDisplayFixtures(all, Math.min(options?.max ?? 12, 40), options?.localDate ? { localDate: options.localDate, timeZone: options.timeZone } : undefined).map((f) => ({
       id: String(f.FixtureId),
       home: {
         name: f.Participant1,

@@ -8,7 +8,7 @@ import { serveTelegramAvatar } from "./telegram-avatar.js";
 import { getTelegramBotInfo } from "./telegram-bot.js";
 import { proxySolanaRpc } from "./solana-rpc.js";
 import type { TelegramLoginPayload } from "./telegram-auth.js";
-import { askBiggy } from "../chat/assistant.js";
+import { askBiggy, isParlayRevision, type ProposedParlay } from "../chat/assistant.js";
 import { getLiveScoresPayload, getTodayScoresPayload } from "./live-scores.js";
 import { getLeaguesPayload, getStandingsPayload } from "./leagues.js";
 import { getFootballFeedHealth } from "../api-football/client.js";
@@ -235,6 +235,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
           fixtureId?: unknown;
           googleCredential?: string;
           guestId?: string;
+          activeParlay?: ProposedParlay;
         }>(req);
         const message = body.message?.trim() ?? "";
         if (!message || message.length > 1_000) {
@@ -273,7 +274,10 @@ export function startApiServer(port: number, host = "0.0.0.0") {
           }
           principal = `guest:${body.guestId}`;
         }
-        const parlayRequest = isParlayRequest(message, history);
+        const supplied = body.activeParlay;
+        const activeParlay = supplied && ["safe", "balanced", "go_big"].includes(supplied.risk) && Array.isArray(supplied.legs) && supplied.legs.length >= 2 && supplied.legs.length <= 3 && supplied.legs.every((leg) => typeof leg.home === "string" && leg.home.length <= 100 && typeof leg.away === "string" && leg.away.length <= 100 && typeof leg.selection === "string" && leg.selection.length <= 120 && typeof leg.kickoffAt === "string" && leg.kickoffAt.length <= 40)
+          ? { title: String(supplied.title ?? "Parlay").slice(0, 120), risk: supplied.risk, legs: supplied.legs.map(({ home, away, selection, kickoffAt }) => ({ home, away, selection, kickoffAt })) } : undefined;
+        const parlayRequest = isParlayRequest(message, history) || isParlayRevision(message, activeParlay);
         if (parlayRequest && tier !== "pro" && tier !== "max") {
           sendJson(res, 403, { error: "Parlay research requires an active Biggy Pro or Max subscription." });
           return;
@@ -302,10 +306,10 @@ export function startApiServer(port: number, host = "0.0.0.0") {
             // Keep UTC for invalid or unsupported timezone names.
           }
         }
-        if (isLongParlayTask(message, history)) {
+        if (isLongParlayTask(message, history) || parlayRequest) {
           const jobId = randomUUID();
           chatJobs.set(jobId, { status: "working", createdAt: Date.now() });
-          void askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal).then((result) => {
+          void askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal, activeParlay).then((result) => {
             chatJobs.set(jobId, { status: "complete", result, createdAt: Date.now() });
           }).catch(async (error) => {
             console.error(`[api] chat job ${jobId} failed:`, error);
@@ -316,7 +320,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
           return;
         }
         try {
-          const result = await askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal);
+          const result = await askBiggy(message, history, timezone, fixtureId, tier === "pro" || tier === "max", authorizeProposal, activeParlay);
           sendJson(res, 200, result, { "Cache-Control": "no-store" });
         } catch (error) {
           try { await refundChatUsage(principal, tier, parlayReserved, reservedAt); } catch { console.error("[api] Failed to refund chat usage"); }

@@ -205,6 +205,7 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
 
+  const startedAt = Date.now();
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -215,6 +216,7 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
     signal: AbortSignal.timeout(22_000),
   });
   const body = (await response.json()) as OpenAiResponse;
+  console.log(`[chat-timing] model_ms=${Date.now() - startedAt} status=${response.status}`);
   if (!response.ok) {
     throw new Error(body.error?.message ?? `OpenAI HTTP ${response.status}`);
   }
@@ -222,6 +224,29 @@ async function callOpenAi(payload: Record<string, unknown>): Promise<OpenAiRespo
 }
 
 function nameKey(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+
+function teamMentioned(message: string, team: string): boolean {
+  const text = nameKey(message), name = nameKey(team);
+  if (name.length >= 4 && ` ${text} `.includes(` ${name} `)) return true;
+  const words = name.split(" ").filter((word) => word.length >= 6);
+  return text.split(" ").some((word) => word.length >= 5 && words.some((candidate) => {
+    if (Math.abs(word.length - candidate.length) > 2) return false;
+    const previous = Array.from({ length: candidate.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= word.length; i++) {
+      let diagonal = previous[0]; previous[0] = i;
+      for (let j = 1; j <= candidate.length; j++) {
+        const above = previous[j];
+        previous[j] = Math.min(previous[j] + 1, previous[j - 1] + 1, diagonal + Number(word[i - 1] !== candidate[j - 1]));
+        diagonal = above;
+      }
+    }
+    return previous[candidate.length] <= 2;
+  }));
+}
+
+export function isParlayRevision(message: string, activeParlay?: ProposedParlay): boolean {
+  return !!activeParlay && /\b(?:replace|swap|change|adjust|another|different|instead|remove|switch|alternative|alternatives|other|not|rather)\b/i.test(message);
+}
 
 async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number, parlayFixtures?: FixtureApiItem[], researched?: Set<string>): Promise<unknown> {
   if (name === "get_match_odds") {
@@ -268,12 +293,15 @@ async function runTool(name: string, rawArguments: string | undefined, selectedF
     if (parlayFixtures) {
       const fixture = parlayFixtures.find((item) => nameKey(item.home.name) === nameKey(parsed.home!) && nameKey(item.away.name) === nameKey(parsed.away!));
       if (!fixture) return { error: "This fixture is not in the verified upcoming list." };
+      const researchStart = Date.now();
       try {
         const research = await fetchApiFootballFixtureResearch(Number(fixture.id));
+        console.log(`[chat-timing] fixture_research_ms=${Date.now() - researchStart} available=${!!research}`);
         if (!research) return { error: "Provider has no research for this fixture; choose another or explain the limitation." };
         researched?.add(fixture.id);
         return { fixture, research, note: "Provider research is informational and is not a guarantee. Odds are not included." };
       } catch {
+        console.log(`[chat-timing] fixture_research_ms=${Date.now() - researchStart} available=false`);
         return { error: "Provider research is temporarily unavailable for this fixture." };
       }
     }
@@ -297,7 +325,8 @@ export async function askBiggy(
   timezone = "UTC",
   selectedFixtureId?: number,
   allowParlay = false,
-  authorizeProposal?: () => Promise<boolean>
+  authorizeProposal?: () => Promise<boolean>,
+  activeParlay?: ProposedParlay
 ): Promise<{ answer: string; model: string; parlay?: ProposedParlay }> {
   const model = process.env.OPENAI_MODEL ?? "gpt-6-luna";
   const requiresRecentResults =
@@ -308,7 +337,9 @@ export async function askBiggy(
   const asksMatchSummary = /\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message);
   const recentParlayContext = history.slice(-6).some((item) => /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(item.content));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
-  const requiresParlayApproval = /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(message) || continuesParlayTask;
+  const revisingParlay = isParlayRevision(message, activeParlay);
+  const replaceWholeParlay = revisingParlay && /\b(?:another|different|new|fresh)\s+(?:(?:safe|balanced|big)\s+)?(?:parlay|parley|accumulator|acca)\b/i.test(message);
+  const requiresParlayApproval = /\b(?:parlays?|parleys?|parly|accumulators?|accas?)\b/i.test(message) || continuesParlayTask || revisingParlay;
   if (requiresParlayApproval && !allowParlay) return { answer: "Parlay research requires an active Biggy Pro or Max subscription.", model };
   // Card clicks already specify the fixture: fetch it before the first model call
   // to avoid an additional model/tool round trip for the common summary path.
@@ -327,7 +358,7 @@ export async function askBiggy(
   if (requiresParlayApproval) {
     const riskText = `${history.filter((item) => item.role === "user").slice(-3).map((item) => item.content).join(" ")} ${message}`;
     const lastRisk = [...riskText.matchAll(/\b(?:safe|hit|balanced|go big|go_big)\b/gi)].at(-1)?.[0].toLowerCase();
-    requestedParlayRisk = lastRisk === "safe" || lastRisk === "hit" ? "safe" : lastRisk === "go big" || lastRisk === "go_big" ? "go_big" : "balanced";
+    requestedParlayRisk = lastRisk === "safe" || lastRisk === "hit" ? "safe" : lastRisk === "go big" || lastRisk === "go_big" ? "go_big" : lastRisk === "balanced" ? "balanced" : revisingParlay ? activeParlay!.risk : "balanced";
     const timeframe = [...riskText.matchAll(/\b(?:today|tonight|tomorrow)\b/gi)].at(-1)?.[0].toLowerCase();
     let localDate = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
     if (timeframe === "tomorrow") {
@@ -335,9 +366,11 @@ export async function askBiggy(
       nextDay.setUTCDate(nextDay.getUTCDate() + 1);
       localDate = nextDay.toISOString().slice(0, 10);
     }
-    parlayFixtures = await getUpcomingFixturesPayload(timeframe ? { localDate, timeZone: timezone } : undefined);
+    const fixtureStart = Date.now();
+    parlayFixtures = await getUpcomingFixturesPayload({ ...(timeframe ? { localDate } : {}), timeZone: timezone, max: revisingParlay ? 40 : 20 });
+    console.log(`[chat-timing] fixture_pool_ms=${Date.now() - fixtureStart} count=${parlayFixtures.length} revision=${revisingParlay}`);
     if (parlayFixtures.length < 2) return { answer: "I can’t verify enough upcoming fixtures for that parlay right now. Please try again later or choose a different day.", model };
-    verifiedParlayContext = `VERIFIED PARLAY CONTEXT: Research and propose a ${requestedParlayRisk} parlay using only these fixtures: ${JSON.stringify(parlayFixtures).slice(0, 12_000)}`;
+    verifiedParlayContext = `VERIFIED PARLAY CONTEXT: Research and propose a ${requestedParlayRisk} parlay using only these fixtures: ${JSON.stringify(parlayFixtures).slice(0, 30_000)}${revisingParlay ? `\nACTIVE USER PROPOSAL TO REVISE: ${JSON.stringify(activeParlay)}` : ""}`;
   }
   const base = {
     model,
@@ -374,6 +407,7 @@ export async function askBiggy(
       "When VERIFIED PARLAY CONTEXT is supplied in the input, do not call get_daily_parlay or get_upcoming_matches again. Use the supplied fixtures, analyze the candidate matchups, and proceed to the approval proposal.",
       "For a parlay, use analyze_match on every fixture before proposing it. Use 2 or 3 distinct fixtures. If provider research is unavailable, explain the limitation instead of fabricating a parlay. Do not invent bookmaker odds or prices.",
       "Do not mention saved cards, internal caches, tool calls, or implementation details. For a parlay, start with a concise explanation of the proposed selections and the verified evidence. Do not claim injuries, form, head-to-head results, or odds that the research did not supply. Call analyze_match for candidate fixtures in parallel where possible.",
+      ...(revisingParlay ? [replaceWholeParlay ? "The user requested a different parlay. Use different matches from the active proposal and research every match in the new card." : "The user is revising the active proposal. Preserve all unaffected matches and selections, replace only the requested leg with a different verified match, and research every match in the revised card. If the target is unclear ask a clarifying question rather than changing unrelated legs."] : []),
       `The user's timezone is ${timezone}. Convert every kickoff time to that timezone and label it; do not default to UTC unless the user's timezone is UTC.`,
     ].join(" "),
     tools: requiresParlayApproval ? TOOLS.filter((tool) => tool.name === "analyze_match" || tool.name === "propose_parlay_for_approval") : allowParlay ? TOOLS : TOOLS.filter((tool) => tool.name !== "get_daily_parlay" && tool.name !== "propose_parlay_for_approval"),
@@ -433,8 +467,13 @@ export async function askBiggy(
           const legs = Array.isArray(candidate.legs) ? candidate.legs : [];
           const matching = legs.map((leg) => parlayFixtures?.find((fixture) => nameKey(fixture.home.name) === nameKey(leg.home ?? "") && nameKey(fixture.away.name) === nameKey(leg.away ?? "")));
           const valid = legs.length >= 2 && legs.length <= 8 && matching.every((fixture, index) => fixture && researchedFixtures.has(fixture.id) && Date.parse(fixture.kickoffAt) > Date.now() && typeof legs[index].selection === "string" && legs[index].selection.trim().length > 0) && new Set(matching.map((fixture) => fixture?.id)).size === legs.length;
-          if (!valid || candidate.risk !== requestedParlayRisk) {
-            return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. Correct the proposal or explain what is unavailable." }) };
+          const preserved = revisingParlay ? legs.filter((leg) => activeParlay!.legs.some((old) => nameKey(old.home) === nameKey(leg.home ?? "") && nameKey(old.away) === nameKey(leg.away ?? "") && nameKey(old.selection) === nameKey(leg.selection ?? ""))).length : 0;
+          const namedTargets = revisingParlay ? activeParlay!.legs.filter((old) => [old.home, old.away].some((team) => teamMentioned(message, team))) : [];
+          const targetRemoved = namedTargets.length !== 1 || !legs.some((leg) => nameKey(leg.home ?? "") === nameKey(namedTargets[0].home) && nameKey(leg.away ?? "") === nameKey(namedTargets[0].away));
+          const hasOldFixture = revisingParlay && legs.some((leg) => activeParlay!.legs.some((old) => nameKey(old.home) === nameKey(leg.home ?? "") && nameKey(old.away) === nameKey(leg.away ?? "")));
+          const validRevision = !revisingParlay || (replaceWholeParlay ? !hasOldFixture : legs.length === activeParlay!.legs.length && preserved === legs.length - 1 && targetRemoved);
+          if (!valid || !validRevision || candidate.risk !== requestedParlayRisk) {
+            return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. For a revision, replace the requested match only and preserve the other selections. Correct the proposal or explain what is unavailable." }) };
           }
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
           proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl })) };
