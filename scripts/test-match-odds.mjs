@@ -22,7 +22,7 @@ axios.defaults.adapter = async (config) => {
   return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
 
-const { fetchMatchOdds, matchParlaySelection, matchParlaySelectionOptions, commonParlayQuotes } = await import("../dist/api-football/match-odds.js");
+const { fetchMatchOdds, matchParlaySelection, matchParlaySelectionOptions, bestParlayQuotes } = await import("../dist/api-football/match-odds.js");
 const [live, shared] = await Promise.all([fetchMatchOdds(1), fetchMatchOdds(1)]);
 assert.equal(live.phase, "live");
 assert.deepEqual(live.markets[0].selections.map((s) => s.selection), ["Home", "Draw"]);
@@ -36,8 +36,8 @@ assert.equal(matchParlaySelection(pre, "Parma to win", "Parma", "AS Roma")?.pric
 assert.equal(matchParlaySelection(pre, "Parma to win or draw", "Parma", "AS Roma"), null);
 assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma")?.price, 3.20, "search other books when the first lacks a market");
 assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma")?.price, 1.40);
-assert.equal(commonParlayQuotes([matchParlaySelectionOptions(pre, "Parma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma")]), null, "never combine different sources as one executable parlay");
-assert.equal(commonParlayQuotes([matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "Over 1.5 goals", "Parma", "AS Roma")])?.length, 2);
+assert.deepEqual(bestParlayQuotes([matchParlaySelectionOptions(pre, "Parma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma")])?.map((quote) => quote.price), [2.25, 3.20], "include prices from different sources");
+assert.equal(bestParlayQuotes([matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma"), []]), null, "never fabricate a missing price");
 assert.equal(matchParlaySelection(live, "Parma win", "Parma", "AS Roma"), null, "never treat live prices as prematch");
 assert.match((await fetchMatchOdds(3)).error, /unavailable/);
 const blocked = await fetchMatchOdds(4);

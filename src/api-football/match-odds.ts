@@ -99,12 +99,10 @@ export function matchParlaySelectionOptions(odds: OddsResult, selection: string,
   return matches.sort((a, b) => b.price - a.price);
 }
 
-/** A combined quote is meaningful only when all selections share one source. */
-export function commonParlayQuotes(options: Array<ReturnType<typeof matchParlaySelectionOptions>>): ReturnType<typeof matchParlaySelectionOptions> | null {
-  if (!options.length) return null;
-  const choices = options[0].map((first) => options.map((leg) => leg.find((quote) => quote.bookmaker.toLowerCase() === first.bookmaker.toLowerCase()))).filter((group): group is ReturnType<typeof matchParlaySelectionOptions> => group.every(Boolean));
-  choices.sort((a, b) => b.reduce((total, quote) => total * quote.price, 1) - a.reduce((total, quote) => total * quote.price, 1));
-  return choices[0] ?? null;
+/** Select the best verified price for each leg, even when sources differ. */
+export function bestParlayQuotes(options: Array<ReturnType<typeof matchParlaySelectionOptions>>): ReturnType<typeof matchParlaySelectionOptions> | null {
+  if (!options.length || options.some((leg) => !leg.length)) return null;
+  return options.map((leg) => leg.reduce((best, quote) => quote.price > best.price ? quote : best));
 }
 
 /** Resolve typed matchups only when exactly one live fixture matches. */

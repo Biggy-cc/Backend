@@ -19,7 +19,7 @@ import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
 import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
 import { getCachedFixtures } from "../api-football/cache.js";
-import { fetchMatchOdds, matchParlaySelectionOptions, commonParlayQuotes } from "../api-football/match-odds.js";
+import { fetchMatchOdds, matchParlaySelectionOptions, bestParlayQuotes } from "../api-football/match-odds.js";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
 const chatJobs = new Map<string, ChatJob>();
@@ -217,7 +217,7 @@ export function startApiServer(port: number, host = "0.0.0.0") {
             return "error" in data ? [] : matchParlaySelectionOptions(data, leg.selection!, fixture.Participant1, fixture.Participant2);
           } catch { return []; }
         }));
-        sendJson(res, 200, { quotes: commonParlayQuotes(quotes) ?? legs.map(() => null) }, { "Cache-Control": "no-store" });
+        sendJson(res, 200, { quotes: bestParlayQuotes(quotes) ?? quotes.map((leg) => leg[0] ?? null) }, { "Cache-Control": "no-store" });
       } catch { sendJson(res, 401, { error: "Could not verify access to prices." }); }
       return;
     }

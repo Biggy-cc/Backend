@@ -1,7 +1,7 @@
 import { getUpcomingFixturesPayload, type FixtureApiItem } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
-import { fetchMatchOdds, resolveLiveOddsFixture, matchParlaySelectionOptions, commonParlayQuotes } from "../api-football/match-odds.js";
+import { fetchMatchOdds, resolveLiveOddsFixture, matchParlaySelectionOptions, bestParlayQuotes } from "../api-football/match-odds.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
@@ -487,8 +487,8 @@ export async function askBiggy(
               return "error" in data ? [] : matchParlaySelectionOptions(data, leg.selection, fixture.home.name, fixture.away.name);
             } catch { return []; }
           }));
-          const quotes = commonParlayQuotes(options);
-          if (!quotes) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "These selections do not have a complete verified set of prices from one source. Choose different researched fixtures or markets and propose again; do not invent prices.", unpricedMatches: legs.filter((_, i) => !options[i].length).map((leg) => `${leg.home} vs ${leg.away}`) }) };
+          const quotes = bestParlayQuotes(options);
+          if (!quotes) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "These selections do not have a complete verified set of prices. Choose different researched fixtures or markets and propose again; do not invent prices.", unpricedMatches: legs.filter((_, i) => !options[i].length).map((leg) => `${leg.home} vs ${leg.away}`) }) };
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
           proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl, odds: quotes[i] })) };
           if (typeof candidate.summary === "string" && candidate.summary.trim()) proposalSummary = candidate.summary.trim().slice(0, 1500);
