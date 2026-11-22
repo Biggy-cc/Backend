@@ -19,7 +19,7 @@ export function startScheduler() {
     (freeApiFootball ? "0 14 * * *" : "0 12,18 * * *");
   const winCheckSchedule = process.env.SOCIAL_WIN_CRON ?? "*/30 14-23 * * *";
 
-  cron.schedule(dailySchedule, async () => {
+  if (process.env.LEGACY_AUTOMATED_PICKS === "1") cron.schedule(dailySchedule, async () => {
     const bot = getBot();
     if (!bot) {
       console.warn("[cron] Bot not ready — skipping daily drop");
@@ -28,7 +28,7 @@ export function startScheduler() {
     await runDailyDrop(bot);
   });
 
-  cron.schedule(refreshSchedule, async () => {
+  if (process.env.LEGACY_AUTOMATED_PICKS === "1") cron.schedule(refreshSchedule, async () => {
     const bot = getBot();
     if (!bot) {
       console.warn("[refresh] Bot not ready — skipping pick refresh");
@@ -67,7 +67,7 @@ export function startScheduler() {
       : process.env.ODDS_WATCH_CRON?.trim() ||
         (freeApiFootball ? "0 7,9,11,13,15,17,19,21 * * *" : "*/30 * * * *");
 
-  if (oddsWatchSchedule) {
+  if (oddsWatchSchedule && process.env.LEGACY_AUTOMATED_PICKS === "1") {
     cron.schedule(oddsWatchSchedule, async () => {
       const bot = getBot();
       if (!bot) {

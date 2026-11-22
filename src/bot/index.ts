@@ -1,45 +1,10 @@
 import { Bot, GrammyError, HttpError } from "grammy";
+import { clearChatSession, handleFreeformMessage } from "./chat.js";
+import { formatAccessStatus, upsertUser } from "../db/users.js";
 import {
-  DAILY_DROP_TEXT,
-  dailyMenuKeyboard,
-  paymentLinkKeyboard,
-  paymentWebKeyboard,
-  slipActionKeyboard,
-  SUBSCRIBE_OFFER_TEXT,
-} from "./keyboards.js";
-import { replyIfPaywalled } from "./subscribe-offer.js";
-import { replyWithPickSlip } from "./tier-media.js";
-import { handleStart } from "./onboarding.js";
-import { handleFreeformMessage } from "./chat.js";
-import { BIGGY_HELP } from "./copy.js";
-import {
-  formatAccessStatus,
-  recordTrialPickView,
-  upsertUser,
-} from "../db/users.js";
-import { isPickContentStale, picksStaleDueToKickoff, upcomingBettableSummary } from "../picks/kickoff.js";
-import {
-  buildLivePitchBlock,
-} from "../picks/live-tracker.js";
-import {
-  clearLiveFeedForUser,
-  registerPendingLiveWatch,
-  resumeLiveFeed,
   startLiveWatchPoller,
   stopLiveFeed,
 } from "../picks/live-watch.js";
-import {
-  getCachedPick,
-  todayPickDate,
-} from "../picks/generate.js";
-import {
-  PICK_PARSE_MODE,
-  TIER_LABELS,
-  formatShareText,
-  parseShareTier,
-} from "../picks/types.js";
-import type { PickTier } from "../picks/types.js";
-import { createPaymentLink } from "../payments/usdc.js";
 import { runDailyDrop } from "../jobs/daily-drop.js";
 
 let botInstance: Bot | null = null;
@@ -68,21 +33,28 @@ async function startBotPolling(): Promise<void> {
 
   bot.command("start", async (ctx) => {
     try {
-      await handleStart(ctx);
+      if (ctx.chat.type !== "private") return;
+      if (ctx.from) clearChatSession(ctx.from.id);
+      await ctx.reply("Hi, I’m Biggy. Ask me about scores, fixtures or football, or let’s research a parlay together. Use /newchat to start a fresh conversation. Times are shown in UTC on Telegram.");
     } catch (err) {
       console.error("[bot] /start failed:", err);
       await ctx.reply("Something went wrong. Try again in a moment.");
     }
   });
 
+  bot.command("newchat", async (ctx) => {
+    if (ctx.from) clearChatSession(ctx.from.id);
+    await ctx.reply("New chat started. What would you like to explore?");
+  });
+
   bot.command("status", async (ctx) => {
     if (!ctx.from) return;
     const user = await upsertUser(ctx.from.id, ctx.from.username);
-    await ctx.reply(formatAccessStatus(user));
+    await ctx.reply(user.subscribed_until ? `Telegram account: ${formatAccessStatus(user)}\nGoogle account plans are not yet linked to Telegram. Manage your web plan at https://biggy.cc/#subscription.` : "Telegram chat currently uses a separate free allowance. Google account plans are not yet linked to Telegram. Manage your web plan at https://biggy.cc/#subscription.");
   });
 
   bot.command("help", async (ctx) => {
-    await ctx.reply(BIGGY_HELP);
+    await ctx.reply("Ask me about live scores, fixtures, teams or football. Paid Telegram users can research a parlay and ask for changes. Use /newchat to start again. Telegram times are in UTC. Your Google plan and Telegram account are not yet linked.");
   });
 
   bot.command("stoplive", async (ctx) => {
@@ -92,142 +64,21 @@ async function startBotPolling(): Promise<void> {
   });
 
   bot.command("picks", async (ctx) => {
-    if (!ctx.from) return;
-    const user = await upsertUser(ctx.from.id, ctx.from.username);
-    if (await replyIfPaywalled(ctx, user)) return;
-    await ctx.reply(DAILY_DROP_TEXT, { reply_markup: dailyMenuKeyboard() });
+    await handleFreeformMessage(ctx, "Help me build a researched balanced parlay", bot);
   });
 
   bot.callbackQuery(/^tier:(hit|aim|go_big)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const tier = ctx.match![1] as PickTier;
-    const user = await upsertUser(ctx.from!.id, ctx.from!.username);
-
-    if (await replyIfPaywalled(ctx, user)) return;
-
-    const pickDate = todayPickDate();
-    const content = await getCachedPick(pickDate, tier);
-
-    if (!content) {
-      const next = await upcomingBettableSummary(3);
-      await ctx.reply(
-        `No card in the system yet for today. Next fixtures: ${next}. The morning drop (8:00 UTC) publishes automatically when priced lines are on the feed.`
-      );
-      return;
-    }
-
-    if (await isPickContentStale(content)) {
-      const next = await upcomingBettableSummary(3);
-      await ctx.reply(
-        `This slip covers fixtures that already kicked off. Next up: ${next}. The noon refresh will republish.`
-      );
-      return;
-    }
-
-    await clearLiveFeedForUser(bot, ctx.from!.id);
-
-    await replyWithPickSlip(ctx, tier, content, slipActionKeyboard(tier));
-
-    try {
-      if (ctx.from && ctx.chat) {
-        const block = await buildLivePitchBlock(pickDate, tier, { tier });
-        if (block?.legs.length) {
-          registerPendingLiveWatch({
-            telegramId: ctx.from.id,
-            chatId: ctx.chat.id,
-            tier,
-            pickDate,
-            legs: block.legs,
-          });
-        }
-      }
-    } catch (err) {
-      console.error("[bot] Live feed watch failed:", err);
-    }
-
-    await recordTrialPickView(ctx.from!.id);
+    await handleFreeformMessage(ctx, `Help me build a researched ${ctx.match![1] === "hit" ? "safe" : ctx.match![1] === "aim" ? "balanced" : "go big"} parlay`, bot);
   });
 
   bot.on("inline_query", async (ctx) => {
-    const tier = parseShareTier(ctx.inlineQuery.query);
-    const date = todayPickDate();
-
-    if (!tier) {
-      await ctx.answerInlineQuery(
-        [
-          {
-            type: "article",
-            id: "biggy-help",
-            title: "Biggy daily football picks",
-            description: "Share a football tier: hit, aim, or go_big",
-            input_message_content: {
-              message_text:
-                "⚽ Get today's football picks from Biggy:\nt.me/BiggyCCBot",
-            },
-          },
-        ],
-        { cache_time: 60 }
-      );
-      return;
-    }
-
-    const content = await getCachedPick(date, tier);
-    if (!content) {
-      await ctx.answerInlineQuery(
-        [
-          {
-            type: "article",
-            id: `empty-${tier}`,
-            title: "Football picks not ready yet",
-            description: "Check back after the morning drop",
-            input_message_content: {
-              message_text:
-                "Today's Biggy football slip isn't ready yet.\n\nGet picks when they drop: t.me/BiggyCCBot",
-            },
-          },
-        ],
-        { cache_time: 30 }
-      );
-      return;
-    }
-
-    const shareText = formatShareText(content);
-    const tierName = TIER_LABELS[tier].replace(/[^\p{L}\p{N}\s]/gu, "").trim();
-
-    await ctx.answerInlineQuery(
-      [
-        {
-          type: "article",
-          id: `${date}-${tier}`,
-          title: `Biggy ${tierName}. Today's football slip`,
-          description: shareText.slice(0, 200),
-          input_message_content: { message_text: shareText },
-        },
-      ],
-      { cache_time: 300, is_personal: false }
-    );
+    await ctx.answerInlineQuery([{ type: "article", id: "biggy-chat", title: "Chat with Biggy", description: "Ask Biggy about football or research a parlay together", input_message_content: { message_text: "Chat with Biggy about football: https://biggy.cc/" } }], { cache_time: 60 });
   });
 
   bot.callbackQuery(/^pay:(monthly|yearly)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const plan = ctx.match![1] as "monthly" | "yearly";
-    await upsertUser(ctx.from!.id, ctx.from!.username, ctx.from!.first_name);
-    const { phantomUrl, solflareUrl, paymentId, amount } = await createPaymentLink(
-      ctx.from!.id,
-      plan
-    );
-
-    const webBase = process.env.PAYMENT_WEB_URL?.trim().replace(/\/$/, "");
-    if (webBase) {
-      await ctx.reply(`Pay $${amount} USDC for Biggy Premium ↗`, {
-        reply_markup: paymentWebKeyboard(`${webBase}?id=${encodeURIComponent(paymentId)}`),
-      });
-      return;
-    }
-
-    await ctx.reply(SUBSCRIBE_OFFER_TEXT, {
-      reply_markup: paymentLinkKeyboard(phantomUrl, solflareUrl),
-    });
+    await ctx.reply("Manage your subscription with your Google account at https://biggy.cc/#subscription. Google subscriptions are not yet linked to Telegram.");
   });
 
   bot.on("message:text", async (ctx) => {

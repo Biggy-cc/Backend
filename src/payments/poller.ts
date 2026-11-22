@@ -3,9 +3,6 @@ import { paymentVerifiedMessage } from "../db/users.js";
 import { checkPendingPayments } from "./usdc.js";
 import { checkGooglePendingPayments } from "./google-usdc.js";
 import { notifyNewSubscription } from "./subscription-notify.js";
-import { DAILY_DROP_TEXT, dailyMenuKeyboard } from "../bot/keyboards.js";
-import { getCachedPick, todayPickDate } from "../picks/generate.js";
-import { PICK_PARSE_MODE } from "../picks/types.js";
 
 const BASE_INTERVAL_MS = 30_000;
 const MAX_INTERVAL_MS = 15 * 60_000;
@@ -55,14 +52,7 @@ export function startPaymentPoller() {
 
         await notifyNewSubscription(bot.api, payment);
 
-        const hit = await getCachedPick(todayPickDate(), "hit");
-        if (hit) {
-          await bot.api.sendMessage(telegramId, hit, { parse_mode: PICK_PARSE_MODE });
-        } else {
-          await bot.api.sendMessage(telegramId, DAILY_DROP_TEXT, {
-            reply_markup: dailyMenuKeyboard(),
-          });
-        }
+        await bot.api.sendMessage(telegramId, "Your access is active. Ask Biggy about football or request a researched parlay.");
       });
 
       // Success — ease back toward the normal cadence.
