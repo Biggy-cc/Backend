@@ -1,7 +1,7 @@
 import { getUpcomingFixturesPayload, type FixtureApiItem } from "../api/fixtures.js";
 import { getCachedPick, todayPickDate } from "../picks/generate.js";
 import { getLiveScoresPayload } from "../api/live-scores.js";
-import { fetchMatchOdds, resolveLiveOddsFixture } from "../api-football/match-odds.js";
+import { fetchMatchOdds, resolveLiveOddsFixture, matchParlaySelectionOptions, commonParlayQuotes } from "../api-football/match-odds.js";
 import {
   fetchApiFootballMatchContext,
   fetchApiFootballMatchEvents,
@@ -428,6 +428,7 @@ export async function askBiggy(
   let proposalSummary: string | undefined;
   let forcedProposal = false;
   let researchRequests = 0;
+  let priceAttempts = 0;
   let response = await callOpenAi({
     ...base,
     input,
@@ -478,8 +479,18 @@ export async function askBiggy(
           if (!valid || !validRevision || candidate.risk !== requestedParlayRisk) {
             return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Every leg must be a distinct, verified upcoming fixture with successful research. For a revision, replace the requested match only and preserve the other selections. Correct the proposal or explain what is unavailable." }) };
           }
+          if (++priceAttempts > 2) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Unable to verify a complete set of current prices. Do not propose this parlay." }) };
+          const options = await Promise.all(legs.map(async (leg, i) => {
+            const fixture = matching[i]!;
+            try {
+              const data = await fetchMatchOdds(Number(fixture.id), { home: fixture.home.name, away: fixture.away.name, kickoffAt: fixture.kickoffAt });
+              return "error" in data ? [] : matchParlaySelectionOptions(data, leg.selection, fixture.home.name, fixture.away.name);
+            } catch { return []; }
+          }));
+          const quotes = commonParlayQuotes(options);
+          if (!quotes) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "These selections do not have a complete verified set of prices from one source. Choose different researched fixtures or markets and propose again; do not invent prices.", unpricedMatches: legs.filter((_, i) => !options[i].length).map((leg) => `${leg.home} vs ${leg.away}`) }) };
           if (!authorizeProposal || !(await authorizeProposal())) return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Daily parlay limit reached. Do not propose a parlay." }) };
-          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl })) };
+          proposedParlay = { title: String(candidate.title ?? "Parlay proposal").slice(0, 120), risk: candidate.risk, legs: legs.map((leg, i) => ({ home: matching[i]!.home.name, away: matching[i]!.away.name, selection: leg.selection, kickoffAt: matching[i]!.kickoffAt, fixtureId: matching[i]!.id, homeLogo: matching[i]!.home.logoUrl, awayLogo: matching[i]!.away.logoUrl, odds: quotes[i] })) };
           if (typeof candidate.summary === "string" && candidate.summary.trim()) proposalSummary = candidate.summary.trim().slice(0, 1500);
           return {
             type: "function_call_output",
@@ -504,5 +515,6 @@ export async function askBiggy(
       input: toolOutputs,
     });
   }
+  if (requiresParlayApproval) return { answer: "I couldn’t verify current prices for a complete researched parlay. Please try again or ask for different matches.", model };
   throw new Error("Biggy used too many tool rounds");
 }

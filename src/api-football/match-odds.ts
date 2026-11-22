@@ -1,10 +1,9 @@
 import { apiGet, fetchApiFootballLiveScores, fetchApiFootballSelectedMatch } from "./client.js";
-import { getApiFootballConfig } from "./config.js";
 
 type Price = { value?: string; odd?: string | number; handicap?: string | number | null; main?: boolean | null; suspended?: boolean };
 type Bet = { name?: string; values?: Price[] };
 type Row = { fixture?: { id?: number }; update?: string; status?: { blocked?: boolean; stopped?: boolean; finished?: boolean }; bets?: Bet[]; bookmakers?: Array<{ name?: string; bets?: Bet[] }> };
-export type OddsResult = { fixtureId: number; match: { home: string; away: string }; phase: "live" | "pre-match"; retrievedAt: string; providerUpdatedAt?: string; bookmaker?: string; markets: Array<{ market: string; selections: Array<{ selection: string; price: number }> }>; unavailable?: string };
+export type OddsResult = { fixtureId: number; match: { home: string; away: string }; phase: "live" | "pre-match"; retrievedAt: string; providerUpdatedAt?: string; bookmaker?: string; markets: Array<{ market: string; selections: Array<{ selection: string; price: number }> }>; books?: Array<{ name: string; markets: OddsResult["markets"] }>; unavailable?: string };
 const cache = new Map<string, { savedAt: number; result: OddsResult }>();
 const pending = new Map<string, Promise<OddsResult>>();
 const LIVE = new Set(["1H", "HT", "2H", "ET", "BT", "P", "LIVE"]);
@@ -52,8 +51,8 @@ export async function fetchMatchOdds(fixtureId: number, verifiedUpcoming?: { hom
     let bets = row.bets ?? [];
     if (phase === "pre-match") {
       const books = row.bookmakers ?? [];
-      const preferred = getApiFootballConfig().preferredBookmaker;
-      const book = books.find((item) => item.name?.toLowerCase() === preferred) ?? books[0];
+      result.books = books.filter((book) => !!book.name).map((book) => ({ name: book.name!, markets: (book.bets ?? []).map(marketValues).filter((market): market is NonNullable<typeof market> => market !== null) })).filter((book) => book.markets.length > 0);
+      const book = books.find((item) => item.name && item.bets?.some((bet) => marketValues(bet)));
       if (book?.name) result.bookmaker = book.name;
       bets = book?.bets ?? [];
     }
@@ -69,7 +68,11 @@ export async function fetchMatchOdds(fixtureId: number, verifiedUpcoming?: { hom
 
 /** Match only unambiguous full-time markets; never infer a price from a similar market. */
 export function matchParlaySelection(odds: OddsResult, selection: string, home: string, away: string): { price: number; bookmaker: string; market: string; selection: string; retrievedAt: string; providerUpdatedAt?: string } | null {
-  if (odds.phase !== "pre-match" || !odds.bookmaker || odds.unavailable) return null;
+  return matchParlaySelectionOptions(odds, selection, home, away)[0] ?? null;
+}
+
+export function matchParlaySelectionOptions(odds: OddsResult, selection: string, home: string, away: string): Array<{ price: number; bookmaker: string; market: string; selection: string; retrievedAt: string; providerUpdatedAt?: string }> {
+  if (odds.phase !== "pre-match" || odds.unavailable) return [];
   const norm = (v: string) => v.toLowerCase().replace(/[–—]/g, "-").replace(/[^a-z0-9.]+/g, " ").trim().replace(/\s+/g, " ");
   const input = norm(selection);
   const homeName = norm(home), awayName = norm(away);
@@ -85,13 +88,23 @@ export function matchParlaySelection(odds: OddsResult, selection: string, home: 
   else if ([`${homeName} or draw`, `${homeName} or draw double chance`, "home or draw", "1x"].includes(input)) { marketPattern = /^double chance$/; outcomes = ["home draw", "1x"]; }
   else if ([`${awayName} or draw`, `${awayName} or draw double chance`, "away or draw", "x2"].includes(input)) { marketPattern = /^double chance$/; outcomes = ["draw away", "away draw", "x2"]; }
   else if (["home or away", "12"].includes(input)) { marketPattern = /^double chance$/; outcomes = ["home away", "12"]; }
-  if (!marketPattern) return null;
-  for (const market of odds.markets) {
+  if (!marketPattern) return [];
+  const matches: ReturnType<typeof matchParlaySelectionOptions> = [];
+  const books = odds.books ?? (odds.bookmaker ? [{ name: odds.bookmaker, markets: odds.markets }] : []);
+  for (const book of books) for (const market of book.markets) {
     if (!marketPattern.test(norm(market.market))) continue;
     const found = market.selections.find((item) => outcomes.includes(norm(item.selection)) && Number.isFinite(item.price) && item.price > 1);
-    if (found) return { price: found.price, bookmaker: odds.bookmaker, market: market.market, selection: found.selection, retrievedAt: odds.retrievedAt, ...(odds.providerUpdatedAt ? { providerUpdatedAt: odds.providerUpdatedAt } : {}) };
+    if (found) matches.push({ price: found.price, bookmaker: book.name, market: market.market, selection: found.selection, retrievedAt: odds.retrievedAt, ...(odds.providerUpdatedAt ? { providerUpdatedAt: odds.providerUpdatedAt } : {}) });
   }
-  return null;
+  return matches.sort((a, b) => b.price - a.price);
+}
+
+/** A combined quote is meaningful only when all selections share one source. */
+export function commonParlayQuotes(options: Array<ReturnType<typeof matchParlaySelectionOptions>>): ReturnType<typeof matchParlaySelectionOptions> | null {
+  if (!options.length) return null;
+  const choices = options[0].map((first) => options.map((leg) => leg.find((quote) => quote.bookmaker.toLowerCase() === first.bookmaker.toLowerCase()))).filter((group): group is ReturnType<typeof matchParlaySelectionOptions> => group.every(Boolean));
+  choices.sort((a, b) => b.reduce((total, quote) => total * quote.price, 1) - a.reduce((total, quote) => total * quote.price, 1));
+  return choices[0] ?? null;
 }
 
 /** Resolve typed matchups only when exactly one live fixture matches. */

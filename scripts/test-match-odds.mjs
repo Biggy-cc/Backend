@@ -17,12 +17,12 @@ axios.defaults.adapter = async (config) => {
   } else if (config.url === "/odds/live") {
     response = id === 4 ? [{ fixture: { id }, status: { blocked: true }, bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.00" }] }] }] : [{ fixture: { id }, update: id === 5 ? new Date(Date.now() - 180_000).toISOString() : new Date().toISOString(), status: { blocked: false }, bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.50" }, { value: "Draw", odd: "3.10" }, { value: "Away", odd: "2.90", suspended: true }] }] }];
   } else if (config.url === "/odds") {
-    response = [{ fixture: { id }, bookmakers: [{ name: "Example Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.25" }] }] }] }];
+    response = [{ fixture: { id }, bookmakers: [{ name: "Example Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.25" }] }] }, { name: "Other Book", bets: [{ name: "Match Winner", values: [{ value: "Away", odd: "3.20" }] }, { name: "Goals Over/Under", values: [{ value: "Over 1.5", odd: "1.40" }] }] }] }];
   } else throw new Error(`Unexpected provider request ${config.url}`);
   return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
 
-const { fetchMatchOdds, matchParlaySelection } = await import("../dist/api-football/match-odds.js");
+const { fetchMatchOdds, matchParlaySelection, matchParlaySelectionOptions, commonParlayQuotes } = await import("../dist/api-football/match-odds.js");
 const [live, shared] = await Promise.all([fetchMatchOdds(1), fetchMatchOdds(1)]);
 assert.equal(live.phase, "live");
 assert.deepEqual(live.markets[0].selections.map((s) => s.selection), ["Home", "Draw"]);
@@ -34,8 +34,10 @@ assert.equal(pre.bookmaker, "Example Book");
 assert.equal(matchParlaySelection(pre, "Parma win", "Parma", "AS Roma")?.price, 2.25);
 assert.equal(matchParlaySelection(pre, "Parma to win", "Parma", "AS Roma")?.price, 2.25);
 assert.equal(matchParlaySelection(pre, "Parma to win or draw", "Parma", "AS Roma"), null);
-assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma"), null);
-assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma"), null);
+assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma")?.price, 3.20, "search other books when the first lacks a market");
+assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma")?.price, 1.40);
+assert.equal(commonParlayQuotes([matchParlaySelectionOptions(pre, "Parma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma")]), null, "never combine different sources as one executable parlay");
+assert.equal(commonParlayQuotes([matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "Over 1.5 goals", "Parma", "AS Roma")])?.length, 2);
 assert.equal(matchParlaySelection(live, "Parma win", "Parma", "AS Roma"), null, "never treat live prices as prematch");
 assert.match((await fetchMatchOdds(3)).error, /unavailable/);
 const blocked = await fetchMatchOdds(4);

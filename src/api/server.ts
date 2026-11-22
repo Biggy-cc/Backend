@@ -19,7 +19,7 @@ import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
 import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
 import { getCachedFixtures } from "../api-football/cache.js";
-import { fetchMatchOdds, matchParlaySelection } from "../api-football/match-odds.js";
+import { fetchMatchOdds, matchParlaySelectionOptions, commonParlayQuotes } from "../api-football/match-odds.js";
 
 type ChatJob = { status: "working" | "complete" | "failed"; result?: Awaited<ReturnType<typeof askBiggy>>; error?: string; createdAt: number };
 const chatJobs = new Map<string, ChatJob>();
@@ -211,13 +211,13 @@ export function startApiServer(port: number, host = "0.0.0.0") {
         const fixtures = getCachedFixtures(Number.POSITIVE_INFINITY) ?? [];
         const quotes = await Promise.all(legs.map(async (leg) => {
           const fixture = fixtures.find((item) => String(item.FixtureId) === leg.fixtureId);
-          if (!fixture || fixture.StartTime * 1000 <= Date.now()) return null;
+          if (!fixture || fixture.StartTime * 1000 <= Date.now()) return [];
           try {
             const data = await fetchMatchOdds(fixture.FixtureId, { home: fixture.Participant1, away: fixture.Participant2, kickoffAt: new Date(fixture.StartTime * 1000).toISOString() });
-            return "error" in data ? null : matchParlaySelection(data, leg.selection!, fixture.Participant1, fixture.Participant2);
-          } catch { return null; }
+            return "error" in data ? [] : matchParlaySelectionOptions(data, leg.selection!, fixture.Participant1, fixture.Participant2);
+          } catch { return []; }
         }));
-        sendJson(res, 200, { quotes }, { "Cache-Control": "no-store" });
+        sendJson(res, 200, { quotes: commonParlayQuotes(quotes) ?? legs.map(() => null) }, { "Cache-Control": "no-store" });
       } catch { sendJson(res, 401, { error: "Could not verify access to prices." }); }
       return;
     }
