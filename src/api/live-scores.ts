@@ -60,12 +60,23 @@ export async function getLiveScoresPayload(): Promise<LiveScoreApiItem[]> {
     }));
 }
 
-export async function getTodayScoresPayload(date: string): Promise<TodayScoreApiItem[]> {
+export function utcDatesForLocalDate(date: string, timezone: string): string[] {
+  const noon = Date.parse(`${date}T12:00:00Z`);
+  const dates = [-1, 0, 1].map((offset) => new Date(noon + offset * 86_400_000).toISOString().slice(0, 10));
+  return dates.filter((utcDate) => {
+    const start = Date.parse(`${utcDate}T00:00:00Z`);
+    return [start, start + 86_399_999].some((timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(timestamp) === date);
+  });
+}
+
+export async function getTodayScoresPayload(date: string, timezone = "UTC"): Promise<TodayScoreApiItem[]> {
   if (!isApiFootballConfigured()) throw new Error("Football provider is not configured");
-  const [scores, live] = await Promise.all([
-    fetchApiFootballScoresByDate(date),
+  const [dateResults, live] = await Promise.all([
+    Promise.all(utcDatesForLocalDate(date, timezone).map(fetchApiFootballScoresByDate)),
     fetchApiFootballLiveScores(),
   ]);
+  const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+  const scores = [...new Map(dateResults.flat().filter((row) => row.kickoffAt && formatter.format(new Date(row.kickoffAt)) === date).map((row) => [row.fixtureId, row])).values()];
   const liveById = new Map(live.map((row) => [row.fixtureId, row]));
   return scores.map((row) => {
     row = liveById.get(row.fixtureId) ?? row;

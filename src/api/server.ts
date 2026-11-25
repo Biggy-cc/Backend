@@ -147,14 +147,19 @@ export function startApiServer(port: number, host = "0.0.0.0") {
         const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
           ? requestedDate
           : new Date().toISOString().slice(0, 10);
+        let timezone = "UTC";
+        const requestedTimezone = requestUrl.searchParams.get("timezone");
+        if (requestedTimezone && requestedTimezone.length <= 64) {
+          try { new Intl.DateTimeFormat("en", { timeZone: requestedTimezone }).format(); timezone = requestedTimezone; } catch { /* Keep UTC. */ }
+        }
         const matches = await Promise.race([
-          getTodayScoresPayload(date),
+          getTodayScoresPayload(date, timezone),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("today matches timeout")), 12_000)
           ),
         ]);
         const health = getFootballFeedHealth(date);
-        sendJson(res, 200, { date, matches, asOf: health.liveAsOf, fixturesAsOf: health.dateAsOf }, {
+        sendJson(res, 200, { date, timezone, matches, asOf: health.liveAsOf, fixturesAsOf: health.dateAsOf }, {
           "Cache-Control": "public, max-age=20",
         });
       } catch (err) {
