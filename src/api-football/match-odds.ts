@@ -101,6 +101,22 @@ export function matchParlaySelectionOptions(odds: OddsResult, selection: string,
   return matches.sort((a, b) => b.price - a.price);
 }
 
+/** Canonical selections that the same validator can actually price. */
+export function quoteableParlaySelections(odds: OddsResult, home: string, away: string): Array<{ selection: string; price: number }> {
+  const candidates = new Set<string>([`${home} to win`, "Draw", `${away} to win`, `${home} or draw`, `${away} or draw`, "home or away", "Both teams to score", "Both teams to score no"]);
+  for (const book of odds.books ?? []) for (const market of book.markets) {
+    if (!/^(goals over\/under|goals over under|over\/under|total goals)$/i.test(market.market)) continue;
+    for (const item of market.selections) {
+      const match = item.selection.trim().match(/^(over|under)\s+(\d+(?:\.\d+)?)$/i);
+      if (match) candidates.add(`${match[1][0].toUpperCase()}${match[1].slice(1).toLowerCase()} ${match[2]} goals`);
+    }
+  }
+  return [...candidates].flatMap((selection) => {
+    const quote = matchParlaySelection(odds, selection, home, away);
+    return quote ? [{ selection, price: quote.price }] : [];
+  });
+}
+
 /** Select the best verified price for each leg, even when sources differ. */
 export function bestParlayQuotes(options: Array<ReturnType<typeof matchParlaySelectionOptions>>): ReturnType<typeof matchParlaySelectionOptions> | null {
   if (!options.length || options.some((leg) => !leg.length)) return null;
