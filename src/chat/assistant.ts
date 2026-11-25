@@ -9,6 +9,7 @@ import {
   fetchApiFootballFixtureResearch,
   fetchFixtureInjuries,
   fetchFixtureLineups,
+  fetchTeamLineup,
   fetchApiFootballNextFixturesForTeam,
   fetchApiFootballRecentFixturesForTeam,
   fetchApiFootballTeamStanding,
@@ -47,6 +48,21 @@ export type ProposedParlay = {
 };
 
 const TOOLS = [
+  {
+    type: "function",
+    name: "get_team_lineup",
+    description: "Look up the official starting lineups for a team's specified match. Resolve the club and opponent from the conversation. Pass the requested local match date or null if not specified; never guess an ambiguous club.",
+    parameters: {
+      type: "object",
+      properties: {
+        team: { type: "string", description: "Full club name, or empty if the user selected a match card." },
+        opponent: { type: ["string", "null"], description: "Opponent if specified, otherwise null." },
+        matchDate: { type: ["string", "null"], description: "Requested date in the user's timezone as YYYY-MM-DD, or null if unspecified." },
+      },
+      required: ["team", "opponent", "matchDate"], additionalProperties: false,
+    },
+    strict: true,
+  },
   {
     type: "function",
     name: "get_match_odds",
@@ -253,7 +269,11 @@ export function isParlayRevision(message: string, activeParlay?: ProposedParlay)
   return !!activeParlay && /\b(?:replace|swap|change|adjust|another|different|instead|remove|switch|alternative|alternatives|other|not|rather)\b/i.test(message);
 }
 
-async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number, parlayFixtures?: FixtureApiItem[], researched?: Set<string>, extra?: { injuries: ReturnType<typeof fetchFixtureInjuries>; news: Map<string, ReturnType<typeof fetchResearchNews>>; includeOdds: boolean }): Promise<unknown> {
+async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number, parlayFixtures?: FixtureApiItem[], researched?: Set<string>, extra?: { injuries: ReturnType<typeof fetchFixtureInjuries>; news: Map<string, ReturnType<typeof fetchResearchNews>>; includeOdds: boolean }, timezone = "UTC"): Promise<unknown> {
+  if (name === "get_team_lineup") {
+    const parsed = JSON.parse(rawArguments || "{}") as { team?: string; opponent?: string | null; matchDate?: string | null };
+    return fetchTeamLineup(parsed.team ?? "", parsed.matchDate ?? null, parsed.opponent ?? null, timezone, selectedFixtureId);
+  }
   if (name === "get_match_odds") {
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
     try {
@@ -354,6 +374,7 @@ export async function askBiggy(
     /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|match(?:es)?|game(?:s)?|result(?:s)?)\b/i.test(message);
   const requiresMatchEvents = /\b(?:who\s+(?:has\s+)?scored|who(?:'s|\s+is)\s+scored|goalscorers?|goal\s*scorers?|who\s+got\s+the\s+goals?|match\s+events|red\s+cards?)\b/i.test(message);
   const asksMatchOdds = /\b(?:odds|ods|betting prices?|bookmaker prices?)\b/i.test(message);
+  const asksLineup = /\b(?:line[ -]?ups?|starting\s*(?:xi|11|eleven)|team\s*sheet|who(?:'s| is| are) starting)\b/i.test(message);
   const asksMatchSummary = /\b(?:tell me about|what(?:'s| is) happening|what happened|match summary)\b/i.test(message) && /\b(?:vs\.?|versus)\b/i.test(message);
   const recentParlayContext = history.slice(-6).some((item) => isParlayRequest(item.content, []));
   const continuesParlayTask = recentParlayContext && /^(?:yes|yeah|yep|ok(?:ay)?|go ahead|do it|safe|balanced|go big)[.! ]*$/i.test(message.trim());
@@ -403,6 +424,7 @@ export async function askBiggy(
       "Resolve professional clubs to their primary domestic league. Never substitute a friendly, summer series, youth, reserve or exhibition competition for a domestic league table.",
       "If a short team name genuinely matches multiple professional clubs and the conversation does not disambiguate it, ask one concise clarification question instead of guessing.",
       "Use get_live_scores for anything happening now or live. Use get_upcoming_matches for future fixtures.",
+      `For starting lineups or team sheets, use get_team_lineup, not live scores. Today's date in the user's timezone is ${new Date().toLocaleDateString("en-CA", { timeZone: timezone })}. Resolve the team and match from the conversation; if a club such as United is genuinely ambiguous, ask which one. Pass an explicitly requested date, including today or yesterday, and never replace it with a different match. If the returned lineup contains the requested team, show the players and formation, noting missing names. A no_lineups response means the data provider returned no lineup; do not claim it has not been announced. An unavailable response is a provider error, not proof no lineup exists. Never invent starting players.`,
       "When the user asks for odds, including misspellings like 'ods' or a correction such as 'I mean match odds', answer the odds request in the context of the match they were discussing. Use get_match_odds unless verified odds data is supplied. Never substitute the score for the odds. Clearly label live versus pre-match, report only active prices without displaying bookmaker names, and state the retrieval or provider-update time in the user's timezone. If prices are missing, suspended or the provider failed, say so without inventing prices or treating pre-match prices as live.",
       ...(selectedOddsContext ? ["Verified selected-fixture odds data is supplied with the conversation. Use that data directly for this odds request; do not call get_match_odds again."] : []),
       "Use get_match_events for goalscorers, assists, cards and match events, including short contextual follow-ups such as 'who scored?'. Resolve both teams from the conversation. If the matchup is unclear, ask for clarification. Distinguish own goals, penalties, disallowed goals and missing event coverage; never invent scorers or claim live scores alone contain them.",
@@ -455,7 +477,9 @@ export async function askBiggy(
   let response = await callOpenAi({
     ...base,
     input,
-    ...(!requiresParlayApproval && !selectedOddsContext && asksMatchOdds
+    ...(!requiresParlayApproval && asksLineup && (selectedFixtureId || history.length > 0 || !/\bunited\b/i.test(message) || /\bmanchester\s+united\b/i.test(message))
+      ? { tool_choice: { type: "function", name: "get_team_lineup" } }
+      : !requiresParlayApproval && !selectedOddsContext && asksMatchOdds
       ? { tool_choice: { type: "function", name: "get_match_odds" } }
       : !requiresParlayApproval && !selectedMatchContext && (asksMatchSummary || requiresMatchEvents) && (history.length > 0 || /\b(?:vs\.?|versus)\b/i.test(message))
       ? { tool_choice: { type: "function", name: "get_match_events" } }
@@ -539,7 +563,7 @@ export async function askBiggy(
         try { return {
           type: "function_call_output",
           call_id: call.call_id,
-          output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId, parlayFixtures, researchedFixtures, extra)),
+          output: JSON.stringify(await runTool(call.name ?? "", call.arguments, selectedFixtureId, parlayFixtures, researchedFixtures, extra, timezone)),
         }; } catch (error) {
           console.error(`[chat] ${call.name ?? "unknown tool"} failed:`, error instanceof Error ? error.message : "unknown error");
           return { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ error: "Football data is temporarily unavailable for this request." }) };

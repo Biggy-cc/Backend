@@ -572,11 +572,11 @@ const lineupsCache = new Map<number, { savedAt: number; value: FixtureLineups }>
 const lineupsPending = new Map<number, Promise<FixtureLineups>>();
 
 /** Official lineups typically appear close to kickoff; avoid expensive early polling. */
-export async function fetchFixtureLineups(fixtureId: number, kickoffAt: string): Promise<FixtureLineups> {
+export async function fetchFixtureLineups(fixtureId: number, kickoffAt: string, options?: { requestedByUser?: boolean }): Promise<FixtureLineups> {
   const checkedAt = new Date().toISOString();
-  if (Date.parse(kickoffAt) - Date.now() > 90 * 60_000) return { status: "too_early", checkedAt, teams: [] };
+  if (!options?.requestedByUser && Date.parse(kickoffAt) - Date.now() > 90 * 60_000) return { status: "too_early", checkedAt, teams: [] };
   const cached = lineupsCache.get(fixtureId);
-  if (cached && Date.now() - cached.savedAt < 10 * 60_000) return cached.value;
+  if (cached && Date.now() - cached.savedAt < (cached.value.status === "available" ? 10 * 60_000 : 60_000)) return cached.value;
   const existing = lineupsPending.get(fixtureId);
   if (existing) return existing;
   const pending = (async (): Promise<FixtureLineups> => {
@@ -591,6 +591,33 @@ export async function fetchFixtureLineups(fixtureId: number, kickoffAt: string):
   })();
   lineupsPending.set(fixtureId, pending);
   try { return await pending; } finally { lineupsPending.delete(fixtureId); }
+}
+
+/** Resolve the requested team's fixture before looking up its official lineup. */
+export async function fetchTeamLineup(teamName: string, matchDate: string | null, opponent: string | null, timezone: string, selectedFixtureId?: number) {
+  if (matchDate && !/^\d{4}-\d{2}-\d{2}$/.test(matchDate)) return { status: "invalid_date", message: "The match date must be YYYY-MM-DD." };
+  if (selectedFixtureId) {
+    const selected = await fetchApiFootballSelectedMatch(selectedFixtureId, { includeEvents: false });
+    if ("error" in selected) return { status: "unavailable", message: selected.error };
+    const fixture = selected.match as ApiFootballScore;
+    if (!fixture.kickoffAt) return { status: "unavailable", message: "The selected fixture has no verified kickoff time." };
+    if (matchDate && new Date(fixture.kickoffAt).toLocaleDateString("en-CA", { timeZone: timezone }) !== matchDate) return { status: "no_fixture", message: "The selected fixture is not on the requested date. Do not substitute it." };
+    return { fixture, lineup: await fetchFixtureLineups(selectedFixtureId, fixture.kickoffAt, { requestedByUser: true }) };
+  }
+  if (!teamName.trim()) return { status: "ambiguous", message: "Ask which team and match the user means." };
+  const team = await resolveEventTeam(teamName.trim());
+  if (!team?.team?.id) return { status: "ambiguous", message: "Team not found or ambiguous. Ask the user to identify the club." };
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  const date = matchDate ?? today;
+  let rows = await apiGet<ApiFixtureRow[]>("/fixtures", { team: team.team.id, date, timezone }, 1);
+  if (!matchDate && !(rows ?? []).length) rows = await apiGet<ApiFixtureRow[]>("/fixtures", { team: team.team.id, next: 1 }, 1);
+  const normalize = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const candidates = (rows ?? []).filter((row) => !opponent || [row.teams.home.name, row.teams.away.name].some((name) => normalize(name) === normalize(opponent)));
+  if (!candidates.length) return { status: "no_fixture", team: team.team.name, date: matchDate, message: "No matching fixture was found; do not substitute another date or match." };
+  if (candidates.length !== 1) return { status: "ambiguous_fixture", fixtures: candidates.map((row) => ({ home: row.teams.home.name, away: row.teams.away.name, competition: row.league.name, kickoffAt: row.fixture.date })), message: "Ask the user which match they mean." };
+  const row = candidates[0];
+  const fixture = { id: row.fixture.id, home: row.teams.home.name, away: row.teams.away.name, competition: row.league.name, kickoffAt: row.fixture.date };
+  return { fixture, lineup: await fetchFixtureLineups(row.fixture.id, row.fixture.date, { requestedByUser: true }) };
 }
 
 /** Provider's fixture-specific research in one request, shared across chats. */
