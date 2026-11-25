@@ -42,6 +42,10 @@ const { fetchTeamLineup, fetchFixtureLineups } = await import("../dist/api-footb
 assert.match((await askBiggy("Manchester United lineup today", [], "Europe/Berlin")).answer, /Player One/);
 assert.equal(requests.find((request) => request.path === "/fixtures").params.date, "2026-11-25");
 assert.equal(requests.find((request) => request.path === "/fixtures/lineups").params.fixture, 1234);
+const selected = await fetchTeamLineup("Manchester United", null, "Sporting CP", "Europe/Berlin", 1234);
+assert.equal(selected.fixture.fixtureId, 1234, "selected match identity must reach the lineup lookup");
+assert.equal(selected.lineup.teams[0].startingXI[0], "Player One");
+assert.equal((await fetchTeamLineup("Manchester United", "2026-11-24", "Sporting CP", "Europe/Berlin", 1234)).status, "no_fixture", "do not substitute a selected match for a conflicting date");
 assert.equal((await fetchTeamLineup("Manchester United", "2026-11-24", null, "Europe/Berlin")).status, "no_fixture");
 lineupMode = "empty";
 assert.equal((await fetchFixtureLineups(1235, "2026-11-25T20:00:00Z", { requestedByUser: true })).status, "no_lineups");

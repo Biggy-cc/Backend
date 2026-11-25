@@ -272,7 +272,13 @@ export function isParlayRevision(message: string, activeParlay?: ProposedParlay)
 async function runTool(name: string, rawArguments: string | undefined, selectedFixtureId?: number, parlayFixtures?: FixtureApiItem[], researched?: Set<string>, extra?: { injuries: ReturnType<typeof fetchFixtureInjuries>; news: Map<string, ReturnType<typeof fetchResearchNews>>; includeOdds: boolean }, timezone = "UTC"): Promise<unknown> {
   if (name === "get_team_lineup") {
     const parsed = JSON.parse(rawArguments || "{}") as { team?: string; opponent?: string | null; matchDate?: string | null };
-    return fetchTeamLineup(parsed.team ?? "", parsed.matchDate ?? null, parsed.opponent ?? null, timezone, selectedFixtureId);
+    // A typed live matchup has no card ID; resolve the exact pair from the shared live feed.
+    // An explicit date is checked by fetchTeamLineup before this fixture is used.
+    let fixtureId = selectedFixtureId;
+    if (!fixtureId && !parsed.matchDate && parsed.team?.trim() && parsed.opponent?.trim()) {
+      try { fixtureId = await resolveLiveOddsFixture(parsed.team, parsed.opponent) ?? undefined; } catch { /* Fall back to date-based resolution. */ }
+    }
+    return fetchTeamLineup(parsed.team ?? "", parsed.matchDate ?? null, parsed.opponent ?? null, timezone, fixtureId);
   }
   if (name === "get_match_odds") {
     const parsed = JSON.parse(rawArguments || "{}") as { home?: string; away?: string };
