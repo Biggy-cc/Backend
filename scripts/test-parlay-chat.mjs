@@ -93,7 +93,10 @@ globalThis.fetch = async (_url, options) => {
     { home: "Gamma", away: "Delta", selection: "Gamma win", kickoffAt: "x" },
   ] })] }), { status: 200 });
 };
-const targetAnswer = await askBiggy("give me a great 3 odds to bet today", [], "Europe/Berlin", undefined, true, async () => true);
+// Ensure the fixture is on "today" in the test timezone even around midnight.
+const targetTimezone = ["UTC", "Pacific/Kiritimati", "Etc/GMT+12"].find((zone) => new Date().toLocaleDateString("en-CA", { timeZone: zone }) === new Date(kickoff * 1000).toLocaleDateString("en-CA", { timeZone: zone }));
+assert.ok(targetTimezone);
+const targetAnswer = await askBiggy("give me a great 3 odds to bet today", [], targetTimezone, undefined, true, async () => true);
 assert.equal(targetAnswer.parlay?.legs.length, 2, "target odds wording should build a priced parlay");
 assert.ok(targetAnswer.parlay.legs.reduce((total, leg) => total * leg.odds.price, 1) >= 2.4);
 assert.match((await askBiggy("give me a great 3 odds to bet today", [], "Europe/Berlin", undefined, false)).answer, /subscription/i, "target odds must respect paid access");

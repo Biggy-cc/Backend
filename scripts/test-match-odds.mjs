@@ -17,7 +17,7 @@ axios.defaults.adapter = async (config) => {
   } else if (config.url === "/odds/live") {
     response = id === 4 ? [{ fixture: { id }, status: { blocked: true }, bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.00" }] }] }] : [{ fixture: { id }, update: id === 5 ? new Date(Date.now() - 180_000).toISOString() : new Date().toISOString(), status: { blocked: false }, bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.50" }, { value: "Draw", odd: "3.10" }, { value: "Away", odd: "2.90", suspended: true }] }] }];
   } else if (config.url === "/odds") {
-    response = [{ fixture: { id }, bookmakers: [{ name: "Example Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.25" }] }] }, { name: "Other Book", bets: [{ name: "Match Winner", values: [{ value: "Away", odd: "3.20" }] }, { name: "Goals Over/Under", values: [{ value: "Over 1.5", odd: "1.40" }] }] }] }];
+    response = [{ fixture: { id }, bookmakers: [{ name: "Example Book", bets: [{ name: "Match Winner", values: [{ value: "Home", odd: "2.25" }] }] }, { name: "Other Book", bets: [{ name: "Match Winner", values: [{ value: "Away", odd: "3.20" }] }, { name: "Goals Over/Under", values: [...Array.from({ length: 12 }, (_, i) => ({ value: `Under ${i + 0.5}`, odd: "1.10" })), { value: "Over 1.5", odd: "1.40" }] }] }] }];
   } else throw new Error(`Unexpected provider request ${config.url}`);
   return { status: 200, statusText: "OK", headers: {}, config, data: { errors: [], response } };
 };
@@ -35,7 +35,7 @@ assert.equal(matchParlaySelection(pre, "Parma win", "Parma", "AS Roma")?.price, 
 assert.equal(matchParlaySelection(pre, "Parma to win", "Parma", "AS Roma")?.price, 2.25);
 assert.equal(matchParlaySelection(pre, "Parma to win or draw", "Parma", "AS Roma"), null);
 assert.equal(matchParlaySelection(pre, "AS Roma win", "Parma", "AS Roma")?.price, 3.20, "search other books when the first lacks a market");
-assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma")?.price, 1.40);
+assert.equal(matchParlaySelection(pre, "Over 1.5 goals", "Parma", "AS Roma")?.price, 1.40, "do not discard selections after the twelfth provider outcome");
 assert.deepEqual(bestParlayQuotes([matchParlaySelectionOptions(pre, "Parma win", "Parma", "AS Roma"), matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma")])?.map((quote) => quote.price), [2.25, 3.20], "include prices from different sources");
 assert.equal(bestParlayQuotes([matchParlaySelectionOptions(pre, "AS Roma win", "Parma", "AS Roma"), []]), null, "never fabricate a missing price");
 assert.equal(matchParlaySelection(live, "Parma win", "Parma", "AS Roma"), null, "never treat live prices as prematch");

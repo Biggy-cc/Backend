@@ -13,7 +13,9 @@ function marketValues(bet: Bet): OddsResult["markets"][number] | null {
   if (!bet.name || !Array.isArray(bet.values)) return null;
   const values = bet.values.filter((v) => !v.suspended && typeof v.value === "string" && Number.isFinite(Number(v.odd)) && Number(v.odd) > 1);
   const selections = values.filter((v) => !values.some((other) => other !== v && other.value === v.value && other.handicap === v.handicap && other.main === true && v.main !== true))
-    .slice(0, 12).map((v) => ({ selection: `${v.value}${v.handicap != null && String(v.handicap).trim() ? ` ${v.handicap}` : ""}`, price: Number(v.odd) }));
+    // Keep the provider's priced selections for matching. Truncating to the first
+    // twelve silently discarded valid goal lines and made priced legs look unavailable.
+    .map((v) => ({ selection: `${v.value}${v.handicap != null && String(v.handicap).trim() ? ` ${v.handicap}` : ""}`, price: Number(v.odd) }));
   return selections.length ? { market: bet.name, selections } : null;
 }
 
