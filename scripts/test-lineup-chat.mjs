@@ -12,7 +12,10 @@ axios.defaults.adapter = async (config) => {
   requests.push({ path: config.url, params: config.params });
   let response;
   if (config.url === "/teams") response = [{ team: { id: 33, name: "Manchester United" } }];
-  else if (config.url === "/fixtures") response = config.params.date === "2026-11-24" ? [] : [{ fixture: { id: 1234, date: "2026-11-25T20:00:00Z", status: { short: "NS" } }, league: { name: "Champions League" }, teams: { home: { id: 33, name: "Manchester United" }, away: { id: 55, name: "Sporting CP" } } }];
+  else if (config.url === "/fixtures") {
+    if (config.params.date) assert.equal(config.params.team, undefined, "date-wide lookup must not require a season");
+    response = config.params.date === "2026-11-24" ? [] : [{ fixture: { id: 1234, date: "2026-11-25T20:00:00Z", status: { short: "NS" } }, league: { name: "Champions League" }, teams: { home: { id: 33, name: "Manchester United" }, away: { id: 55, name: "Sporting CP" } } }];
+  }
   else if (config.url === "/fixtures/lineups") {
     if (lineupMode === "error") throw new Error("provider offline");
     response = lineupMode === "empty" ? [] : [{ team: { name: "Manchester United" }, formation: "4-3-3", startXI: [{ player: { name: "Player One" } }] }];

@@ -609,7 +609,10 @@ export async function fetchTeamLineup(teamName: string, matchDate: string | null
   if (!team?.team?.id) return { status: "ambiguous", message: "Team not found or ambiguous. Ask the user to identify the club." };
   const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
   const date = matchDate ?? today;
-  let rows = await apiGet<ApiFixtureRow[]>("/fixtures", { team: team.team.id, date, timezone }, 1);
+  // API-Football requires a season when filtering fixtures by team and date.
+  // The date-wide endpoint does not; filter its results by the verified team ID.
+  let rows = (await apiGet<ApiFixtureRow[]>("/fixtures", { date, timezone }, 1) ?? [])
+    .filter((row) => row.teams.home.id === team.team.id || row.teams.away.id === team.team.id);
   if (!matchDate && !(rows ?? []).length) rows = await apiGet<ApiFixtureRow[]>("/fixtures", { team: team.team.id, next: 1 }, 1);
   const normalize = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const candidates = (rows ?? []).filter((row) => !opponent || [row.teams.home.name, row.teams.away.name].some((name) => normalize(name) === normalize(opponent)));
