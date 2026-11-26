@@ -8,12 +8,12 @@ export async function readRawBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T> {
+export async function readJsonBody<T = unknown>(req: IncomingMessage, maxBytes = 64 * 1024): Promise<T> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += Buffer.byteLength(chunk as Buffer);
-    if (size > 64 * 1024) throw new Error("Request body too large");
+    if (size > maxBytes) throw new Error("Request body too large");
     chunks.push(chunk as Buffer);
   }
 

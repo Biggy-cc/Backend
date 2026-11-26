@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.DATABASE_BACKEND = "sqlite";
+process.env.DATABASE_PATH = join(mkdtempSync(join(tmpdir(), "biggy-workspace-test-")), "test.db");
+const { runMigrations } = await import("../src/db/client.js");
+const { readWorkspace, writeWorkspace, validateWorkspace } = await import("../src/db/google-workspace.js");
+await runMigrations();
+const first = { messages: [{ role: "user", content: "hello" }], chats: [], parlays: [], activeChatId: null };
+assert.equal(validateWorkspace(first), true);
+assert.equal(validateWorkspace({ ...first, messages: "invalid" }), false);
+assert.equal((await readWorkspace("alice")).revision, 0);
+assert.equal(await writeWorkspace("alice", 0, first), 1);
+assert.equal((await readWorkspace("bob")).revision, 0);
+assert.deepEqual((await readWorkspace("alice")).data, first);
+assert.equal(await writeWorkspace("alice", 0, { ...first, messages: [] }), null);
+assert.deepEqual((await readWorkspace("alice")).data, first);
+const second = { ...first, chats: [{ id: "another-device" }] };
+assert.equal(await writeWorkspace("alice", 1, second), 2);
+assert.equal(await writeWorkspace("alice", 1, first), null);
+assert.deepEqual((await readWorkspace("alice")).data, second);
+console.log("Google workspace isolation and revision checks passed");

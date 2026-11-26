@@ -23,6 +23,13 @@ CREATE TABLE IF NOT EXISTS google_accounts (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS google_workspace (
+  google_sub TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  data_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS google_pending_payments (
   id TEXT PRIMARY KEY,
   google_sub TEXT NOT NULL,

@@ -15,6 +15,7 @@ import { getFootballFeedHealth } from "../api-football/client.js";
 import { randomUUID } from "node:crypto";
 import { verifyGoogleCredential } from "./google-auth.js";
 import { getVerifiedGoogleAccess, upsertGoogleAccount } from "../db/google-accounts.js";
+import { readWorkspace, validateWorkspace, writeWorkspace } from "../db/google-workspace.js";
 import { startGoogleCheckout, getGoogleCheckout } from "./google-checkout.js";
 import { extendSubscriptionUntil, formatSubscriptionDate } from "../db/users.js";
 import { reserveChatUsage, reserveParlayUsage, refundChatUsage, type ChatTier } from "../chat/usage.js";
@@ -95,6 +96,28 @@ export function startApiServer(port: number, host = "0.0.0.0") {
       } catch (err) {
         console.error("[api] Google sign-in failed:", err instanceof Error ? err.message : "unknown error");
         sendJson(res, 503, { error: "Account service is temporarily unavailable. Please try again." });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/google/workspace") {
+      try {
+        const body = await readJsonBody<{ credential?: string; action?: string; revision?: number; data?: unknown }>(req, 1024 * 1024);
+        let user;
+        try { user = await verifyGoogleCredential(body.credential ?? ""); }
+        catch { sendJson(res, 401, { error: "Your Google session could not be verified." }); return; }
+        if (body.action === "read") {
+          sendJson(res, 200, await readWorkspace(user.sub), { "Cache-Control": "no-store" }); return;
+        }
+        if (body.action !== "write" || !Number.isSafeInteger(body.revision) || body.revision! < 0 || !validateWorkspace(body.data)) {
+          sendJson(res, 400, { error: "Invalid workspace data." }); return;
+        }
+        const revision = await writeWorkspace(user.sub, body.revision!, body.data);
+        if (revision === null) { sendJson(res, 409, { error: "Saved data changed on another device. Your local copy was not overwritten." }); return; }
+        sendJson(res, 200, { revision }, { "Cache-Control": "no-store" });
+      } catch (error) {
+        console.error("[workspace] request failed:", error instanceof Error ? error.message : "unknown error");
+        sendJson(res, 503, { error: "Account data is temporarily unavailable." });
       }
       return;
     }
